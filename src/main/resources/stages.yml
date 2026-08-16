@@ -1,0 +1,12 @@
+schema-version: 1
+plots:
+  plot_1:
+    stages:
+      "1":
+        volume:
+          x: 5
+          y: 2
+          z: 5
+        blocks:
+          - "2 0 2 minecraft:stone"
+          - "2 1 2 minecraft:oak_button[face=wall,facing=north,powered=false]"

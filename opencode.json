@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "references": {
+    "minecraft-workflow": {
+      "path": "../multitask-opencode",
+      "description": "Shared Minecraft engineering standards, patterns, templates, and repository-boundary rules. RestaurantTycoon source, tests, AGENTS.md, and CURRENT_STATE.md remain authoritative."
+    },
+    "livingnpc": {
+      "path": "../living-npc-plugin",
+      "description": "Reference implementation for Paper lifecycle, bounded server-thread work, persistence safety, testing evidence, and incident handling. Do not inherit its versions, Citizens assumptions, schemas, release gates, or production state, and do not edit it during RestaurantTycoon-only work."
+    }
+  }
+}

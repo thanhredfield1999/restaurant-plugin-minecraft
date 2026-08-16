@@ -1,0 +1,22 @@
+name: RestaurantTycoon
+version: ${version}
+main: vn.restauranttycoon.RestaurantTycoonPlugin
+api-version: "1.20"
+authors: [restauranttycoon]
+description: Server-authoritative restaurant tycoon gameplay.
+commands:
+  restaurant:
+    description: Restaurant Tycoon command.
+    usage: /restaurant <health|balance|order|grant|setup|setup-route|dev assign|dev purchase|dev fixture>
+    permission: restauranttycoon.command
+permissions:
+  restauranttycoon.command:
+    default: true
+  restauranttycoon.admin.health:
+    default: op
+  restauranttycoon.admin.grant:
+    default: op
+  restauranttycoon.admin.dev:
+    default: op
+  restauranttycoon.admin.setup:
+    default: op

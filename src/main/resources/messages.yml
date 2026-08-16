@@ -1,0 +1,75 @@
+supply-setup:
+  menu:
+    central-title: "Thiết lập nhà cung cấp trung tâm"
+    restaurant-title: "Thiết lập nhập hàng: {restaurant}"
+    loading: "Đang tải dữ liệu thiết lập..."
+    database-unavailable: "Cơ sở dữ liệu chưa sẵn sàng. Không thể mở thiết lập."
+    unknown-restaurant: "Không tìm thấy nhà hàng cấu hình: {restaurant}"
+    players-only: "Chỉ người chơi mới có thể mở GUI thiết lập."
+    no-permission: "Bạn không có quyền thiết lập hệ thống nhập hàng."
+    usage: "Dùng: /restaurant setup <central|plotId>"
+  point:
+    ORDER_DESK:
+      name: "Bàn tiếp nhận đơn"
+      description: "NPC tại đây tiếp nhận yêu cầu mua nguyên liệu."
+    SUPPLIER_SPAWN:
+      name: "Điểm xuất phát nhà cung cấp"
+      description: "Đoàn Villager và thú chở hàng xuất hiện tại đây."
+    DELIVERY_ENTRY:
+      name: "Lối vào giao hàng"
+      description: "Đoàn giao hàng bắt đầu tuyến riêng của nhà hàng tại đây."
+    DELIVERY_STOP:
+      name: "Điểm dừng giao hàng"
+      description: "Đoàn dừng tại đây để member ký nhận."
+    UNLOAD_POINT:
+      name: "Điểm dỡ kiện"
+      description: "Các kiện đã ký nhận được dỡ xuống tại đây."
+    WAREHOUSE_ENTRY:
+      name: "Lối vào kho"
+      description: "Member đưa kiện vào đúng khu kho từ điểm này."
+    DELIVERY_EXIT:
+      name: "Lối ra giao hàng"
+      description: "Đoàn rời khu nhận hàng theo điểm này."
+    DELIVERY_DESPAWN:
+      name: "Điểm kết thúc đoàn"
+      description: "Đoàn giao hàng biến mất an toàn tại đây."
+  status:
+    UNSET: "Chưa cấu hình"
+    CONFIGURED: "Đã cấu hình"
+  lore:
+    status: "Trạng thái: {status}"
+    location: "Vị trí: {world} ({x}, {y}, {z})"
+    set: "Chuột trái: Đặt tại vị trí hiện tại"
+    teleport: "Chuột phải: Dịch chuyển tới điểm"
+    delete: "Shift + chuột phải: Mở xác nhận xóa"
+    overwrite-warning: "Cảnh báo: Chuột trái sẽ ghi đè điểm hiện tại"
+  feedback:
+    saved: "Đã lưu {point}."
+    deleted: "Đã xóa {point}."
+    unset: "Điểm này chưa được cấu hình."
+    world-unavailable: "World của điểm chưa được tải: {world}"
+    operation-failed: "Không thể cập nhật thiết lập; dữ liệu cũ được giữ nguyên."
+  route:
+    open-name: "Tuyến giao hàng"
+    open-lore: "Mở trình thiết lập waypoint tuyến giao hàng.\nMỗi waypoint được lưu theo đúng thứ tự di chuyển.\n\nNhấp chuột: Mở tuyến giao hàng"
+    title: "Tuyến giao - {restaurant}"
+    add-name: "Thêm waypoint tiếp theo"
+    add-lore: "Chuột trái: Lưu vị trí hiện tại"
+    back-name: "Quay lại"
+    back-lore: "Đóng trình thiết lập tuyến"
+    waypoint-name: "Waypoint {sequence}: {name}"
+    waypoint-location: "Vị trí: {world} ({x}, {y}, {z})"
+    set-lore: "Chuột trái: Cập nhật tại vị trí hiện tại"
+    teleport-lore: "Chuột phải: Dịch chuyển tới waypoint"
+    delete-lore: "Shift + chuột phải: Xác nhận xóa"
+    default-name: "Waypoint {sequence}"
+    must-fill-order: "Hãy đặt các waypoint trước theo đúng thứ tự."
+    confirm-title: "Xác nhận xóa waypoint"
+    confirm-delete: "Xóa waypoint"
+    confirm-cancel: "Hủy"
+  confirm:
+    title: "Xác nhận xóa điểm"
+    delete-name: "Xóa {point}"
+    delete-lore: "Thao tác này xóa vị trí đã lưu.|Không thể hoàn tác bằng GUI."
+    cancel-name: "Hủy"
+    cancel-lore: "Quay lại menu thiết lập mà không thay đổi dữ liệu."

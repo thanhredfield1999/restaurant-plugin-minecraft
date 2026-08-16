@@ -1,0 +1,58 @@
+schema-version: 2
+database:
+  enabled: false
+  host: localhost
+  port: 5432
+  name: restaurant_tycoon
+  username: restaurant_tycoon
+  password: change-me
+  maximum-pool-size: 10
+  connection-timeout-ms: 5000
+gameplay:
+  max-active-plots: 20
+  max-physical-customers-per-plot: 4
+world-operations:
+  instance-id: paper-1
+  poll-ticks: 10
+  lease-seconds: 30
+  blocks-per-tick: 500
+# Chỉ những cần gạt có tọa độ khai báo tại đây mới là quầy nước.
+# Gạt xuống để bắt đầu rót; chờ đủ thời gian rồi gạt lên để lấy vào tay chính trống.
+# Thay đổi phần này chỉ có hiệu lực sau khi khởi động lại plugin/server an toàn.
+drink-dispensers:
+  fill-seconds: 3
+  stations: {}
+  # stations:
+  #   water_1:
+  #     world: world
+  #     location: {x: 10, y: 65, z: -4}
+  #     drink: WATER
+supply-catalog:
+  version: 1
+  ingredients:
+    tomato:
+      display-name: "Cà chua"
+      unit: PIECE
+      unit-price: 25
+      max-quantity: 64
+    rice:
+      display-name: "Gạo"
+      unit: GRAM
+      unit-price: 1
+      max-quantity: 1000
+plots:
+  plot_1:
+    world: world
+    origin:
+      x: 0
+      y: 64
+      z: 0
+    trigger:
+      min:
+        x: -2
+        y: 64
+        z: -2
+      max:
+        x: 2
+        y: 67
+        z: 2
