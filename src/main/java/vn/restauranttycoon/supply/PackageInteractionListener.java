@@ -59,32 +59,25 @@ public final class PackageInteractionListener implements Listener {
             return;
         }
         UUID operationId = UUID.nameUUIDFromBytes(operationKey.getBytes(StandardCharsets.UTF_8));
-        if (hasPackageToken(player, packageId)) {
-            inFlight.remove(operationKey);
-            player.sendMessage(ChatColor.YELLOW + "Bạn đã có token package này trong túi đồ.");
-            return;
-        }
-        if (player.getInventory().firstEmpty() < 0) {
-            inFlight.remove(operationKey);
-            player.sendMessage(ChatColor.RED + "Túi đồ đầy; package chưa thể nhận.");
-            return;
-        }
-        java.util.Map<Integer, ItemStack> tokenOverflow = player.getInventory().addItem(token);
-        if (!tokenOverflow.isEmpty()) {
-            inFlight.remove(operationKey);
-            player.sendMessage(ChatColor.RED + "Túi đồ đầy; package chưa thể nhận.");
-            return;
-        }
         player.sendMessage(ChatColor.GRAY + "Đang nhận package...");
         database.executor().execute(() -> {
             try {
                 new SupplyFulfillmentRepository(database.requireDataSource()).handoffPackageAuthorizedForOrderPlayer(
                         packageId, player.getUniqueId(), operationId);
                 Bukkit.getScheduler().runTask(plugin, () -> {
-                    event.getRightClicked().remove();
-                    if (player.isOnline()) {
-                        player.sendMessage(ChatColor.GREEN + "Đã nhận package. Hãy mang vào kho để nhập hàng.");
+                    if (!player.isOnline()) return;
+                    if (hasPackageToken(player, packageId)) {
+                        event.getRightClicked().remove();
+                        player.sendMessage(ChatColor.GREEN + "Đã xác nhận package. Hãy mang vào kho để nhập hàng.");
+                        return;
                     }
+                    if (player.getInventory().firstEmpty() < 0
+                            || !player.getInventory().addItem(token).isEmpty()) {
+                        player.sendMessage(ChatColor.YELLOW + "Package đã được xác nhận; túi đồ đầy, hãy mở chỗ trống rồi tương tác lại.");
+                        return;
+                    }
+                    event.getRightClicked().remove();
+                    player.sendMessage(ChatColor.GREEN + "Đã nhận package. Hãy mang vào kho để nhập hàng.");
                 });
             } catch (SQLException | RuntimeException exception) {
                 Bukkit.getScheduler().runTask(plugin, () -> {
