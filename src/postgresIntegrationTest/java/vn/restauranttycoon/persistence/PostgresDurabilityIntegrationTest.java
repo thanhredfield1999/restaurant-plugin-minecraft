@@ -35,6 +35,7 @@ import vn.restauranttycoon.worldoperation.WorldOperationClaim;
 import vn.restauranttycoon.worldoperation.WorldOperationRepository;
 import vn.restauranttycoon.supply.SupplyFulfillmentRecord;
 import vn.restauranttycoon.supply.SupplyFulfillmentRepository;
+import vn.restauranttycoon.supply.SupplyDeliveryFinalizeResult;
 import vn.restauranttycoon.supply.SupplyRuntimeClaim;
 import vn.restauranttycoon.supply.StaleSupplyRuntimeClaimException;
 
@@ -162,6 +163,45 @@ class PostgresDurabilityIntegrationTest extends PostgresIntegrationSupport {
             repository.dispatch(replacement);
         } finally {
             executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void postgresFinalizeRetryAfterCleanupConfirmationIsIdempotent() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        UUID restaurantId = UUID.randomUUID();
+        UUID playerId = UUID.randomUUID();
+        seedPaidSupplyOrder(orderId, restaurantId, playerId);
+        SupplyFulfillmentRepository repository = new SupplyFulfillmentRepository(dataSource);
+        SupplyFulfillmentRecord fulfillment = repository.createForPaidOrder(orderId, restaurantId);
+        UUID handoffOperation = UUID.randomUUID();
+        UUID stockOperation = UUID.randomUUID();
+        UUID finalizeOperation = UUID.randomUUID();
+        setShipmentArrived(fulfillment.shipmentId());
+        repository.handoff(fulfillment.shipmentId(), playerId, handoffOperation);
+        repository.stock(fulfillment.packageId(), restaurantId, stockOperation);
+        setRuntimeDespawn(fulfillment.shipmentId());
+
+        assertEquals(SupplyDeliveryFinalizeResult.APPLIED,
+                repository.finalizeDelivery(fulfillment.shipmentId(), 1, finalizeOperation));
+        assertTrue(repository.confirmEntityCleanup(fulfillment.shipmentId(), finalizeOperation));
+        assertEquals(SupplyDeliveryFinalizeResult.IDEMPOTENT_REPLAY,
+                repository.finalizeDelivery(fulfillment.shipmentId(), 1, finalizeOperation));
+    }
+
+    private void setShipmentArrived(UUID shipmentId) throws SQLException {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
+                "UPDATE supply_shipments SET state = 'ARRIVED' WHERE shipment_id = ?")) {
+            statement.setObject(1, shipmentId);
+            statement.executeUpdate();
+        }
+    }
+
+    private void setRuntimeDespawn(UUID shipmentId) throws SQLException {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
+                "UPDATE supply_shipment_runtime SET checkpoint_stage = 'DELIVERY_DESPAWN', checkpoint_index = 0, recovery_outcome = 'NONE', revision = 1, entity_cleanup_state = 'NONE', entity_cleanup_operation_id = NULL WHERE shipment_id = ?")) {
+            statement.setObject(1, shipmentId);
+            statement.executeUpdate();
         }
     }
 

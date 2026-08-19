@@ -135,6 +135,19 @@ class SupplyFulfillmentRepositoryTest {
     }
 
     @Test
+    void finalizeRetryAfterCleanupConfirmationIsIdempotent() throws SQLException {
+        SupplyFulfillmentRecord fulfillment = repository.createForPaidOrder(orderId, restaurantId);
+        UUID operationId = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        prepareFinalizedDelivery(fulfillment);
+
+        assertEquals(SupplyDeliveryFinalizeResult.APPLIED,
+                repository.finalizeDelivery(fulfillment.shipmentId(), 1, operationId));
+        assertEquals(true, repository.confirmEntityCleanup(fulfillment.shipmentId(), operationId));
+        assertEquals(SupplyDeliveryFinalizeResult.IDEMPOTENT_REPLAY,
+                repository.finalizeDelivery(fulfillment.shipmentId(), 1, operationId));
+    }
+
+    @Test
     void renewRejectsExpiredClaim() throws SQLException {
         SupplyFulfillmentRecord fulfillment = repository.createForPaidOrder(orderId, restaurantId);
         SupplyRuntimeClaim claim = repository.claimNext("worker-a", Duration.ofSeconds(30)).orElseThrow();
@@ -142,6 +155,24 @@ class SupplyFulfillmentRepositoryTest {
         assertThrows(StaleSupplyRuntimeClaimException.class,
                 () -> repository.renew(claim, Duration.ofSeconds(30)));
     }
+
+    private void prepareFinalizedDelivery(SupplyFulfillmentRecord fulfillment) throws SQLException {
+        UUID handoffOperation = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        UUID stockOperation = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        try (var connection = dataSource.getConnection(); var statement = connection.prepareStatement(
+                "UPDATE supply_shipments SET state = 'ARRIVED' WHERE shipment_id = ?")) {
+            statement.setObject(1, fulfillment.shipmentId());
+            statement.executeUpdate();
+        }
+        repository.handoff(fulfillment.shipmentId(), playerId, handoffOperation);
+        repository.stock(fulfillment.packageId(), restaurantId, stockOperation);
+        try (var connection = dataSource.getConnection(); var statement = connection.prepareStatement(
+                "UPDATE supply_shipment_runtime SET checkpoint_stage = 'DELIVERY_DESPAWN', checkpoint_index = 0, revision = 1, recovery_outcome = 'NONE', entity_cleanup_state = 'NONE', entity_cleanup_operation_id = NULL WHERE shipment_id = ?")) {
+            statement.setObject(1, fulfillment.shipmentId());
+            statement.executeUpdate();
+        }
+    }
+
 
     private void expireClaim(UUID shipmentId) throws SQLException {
         try (var connection = dataSource.getConnection(); var statement = connection.prepareStatement(

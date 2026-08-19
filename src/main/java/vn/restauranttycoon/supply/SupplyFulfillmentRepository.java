@@ -789,8 +789,9 @@ public final class SupplyFulfillmentRepository {
                     }
                 }
                 if (operationId.equals(previousOperation)) {
-                    if (revision != expectedRevision + 1 || !"DELIVERY_DESPAWN".equals(stage)
-                            || !operationId.equals(cleanupOperation)) {
+                    if (revision < expectedRevision + 1 || !"DELIVERY_DESPAWN".equals(stage)
+                            || !operationId.equals(cleanupOperation)
+                            || (!"REQUIRED".equals(cleanupState) && !"CONFIRMED".equals(cleanupState))) {
                         throw new IllegalStateException("Finalize operation payload conflict");
                     }
                     connection.commit();
