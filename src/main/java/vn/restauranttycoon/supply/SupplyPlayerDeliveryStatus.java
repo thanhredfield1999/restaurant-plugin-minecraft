@@ -1,0 +1,18 @@
+package vn.restauranttycoon.supply;
+
+public enum SupplyPlayerDeliveryStatus {
+    ORDER_SUBMITTED,
+    PAYMENT_CAPTURED,
+    PREPARING,
+    IN_TRANSIT,
+    AT_DELIVERY_STOP,
+    WAITING_FOR_RECEIVING,
+    RECEIVED_MANUALLY,
+    RECEIVED_BY_WORKER,
+    STOCKING,
+    STOCKED,
+    COMPLETED,
+    WAITING_RETRY,
+    PENDING_MANUAL,
+    FAILED_SAFE
+}
