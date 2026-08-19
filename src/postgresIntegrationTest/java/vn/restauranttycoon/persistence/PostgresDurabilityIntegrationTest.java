@@ -3,6 +3,7 @@ package vn.restauranttycoon.persistence;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -16,6 +17,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.time.Instant;
+import java.util.Map;
+import vn.restauranttycoon.market.MarketCycle;
+import vn.restauranttycoon.market.MarketRepository;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -28,9 +33,42 @@ import vn.restauranttycoon.purchase.PurchaseRequest;
 import vn.restauranttycoon.worldoperation.StaleWorldOperationClaimException;
 import vn.restauranttycoon.worldoperation.WorldOperationClaim;
 import vn.restauranttycoon.worldoperation.WorldOperationRepository;
+import vn.restauranttycoon.supply.SupplyFulfillmentRecord;
+import vn.restauranttycoon.supply.SupplyFulfillmentRepository;
+import vn.restauranttycoon.supply.SupplyRuntimeClaim;
+import vn.restauranttycoon.supply.StaleSupplyRuntimeClaimException;
 
 @EnabledIfEnvironmentVariable(named = "RT_TEST_POSTGRES_URL", matches = "jdbc:postgresql:.+")
 class PostgresDurabilityIntegrationTest extends PostgresIntegrationSupport {
+    @Test
+    void concurrentMarketWorkersConvergeOnOneCycleOnPostgres() throws Exception {
+        Instant now = Instant.parse("2026-08-19T00:00:00Z");
+        ExecutorService executor = Executors.newFixedThreadPool(12);
+        try {
+            CompletableFuture<?>[] attempts = new CompletableFuture<?>[48];
+            for (int index = 0; index < attempts.length; index++) {
+                attempts[index] = CompletableFuture.supplyAsync(() -> {
+                    try {
+                        return new MarketRepository(dataSource).ensureOpenCycle(
+                                Map.of("tomato", 25L), now, Duration.ofMinutes(10));
+                    } catch (SQLException exception) {
+                        throw new IllegalStateException(exception);
+                    }
+                }, executor);
+            }
+            CompletableFuture.allOf(attempts).get(30, TimeUnit.SECONDS);
+            java.util.Set<UUID> cycleIds = new java.util.HashSet<>();
+            for (CompletableFuture<?> attempt : attempts) {
+                cycleIds.add(((MarketCycle) attempt.get()).cycleId());
+            }
+            assertEquals(1, cycleIds.size());
+            assertEquals(1, count("market_cycles"));
+            assertEquals(1, count("market_prices"));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     @Test
     void flywayRerunAndConcurrentPurchaseRetryStayIdempotent() throws Exception {
         Flyway flyway = Flyway.configure()
@@ -40,7 +78,7 @@ class PostgresDurabilityIntegrationTest extends PostgresIntegrationSupport {
                 .locations("classpath:db/migration")
                 .load();
         assertEquals(0, flyway.migrate().migrationsExecuted);
-        assertEquals("12", flyway.info().current().getVersion().getVersion());
+        assertEquals("17", flyway.info().current().getVersion().getVersion());
 
         UUID owner = fundedAssignedOwner();
         PurchaseRequest request = request(owner, OperationKey.create());
@@ -92,6 +130,74 @@ class PostgresDurabilityIntegrationTest extends PostgresIntegrationSupport {
         assertEquals(1, count("plot_projection_state"));
         assertTrue(restartedProcess.claimNext(
                 "paper-third", Duration.ofSeconds(30)).isEmpty());
+    }
+
+    @Test
+    void concurrentSupplyWorkersClaimOneShipmentAndExpiredClaimIsFenced() throws Exception {
+        UUID orderId = UUID.randomUUID();
+        UUID restaurantId = UUID.randomUUID();
+        UUID playerId = UUID.randomUUID();
+        seedPaidSupplyOrder(orderId, restaurantId, playerId);
+        SupplyFulfillmentRecord fulfillment = new SupplyFulfillmentRepository(dataSource)
+                .createForPaidOrder(orderId, restaurantId);
+        SupplyFulfillmentRepository repository = new SupplyFulfillmentRepository(dataSource);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            CompletableFuture<Optional<SupplyRuntimeClaim>> first = CompletableFuture.supplyAsync(
+                    () -> claim(repository, "supply-a"), executor);
+            CompletableFuture<Optional<SupplyRuntimeClaim>> second = CompletableFuture.supplyAsync(
+                    () -> claim(repository, "supply-b"), executor);
+            CompletableFuture.allOf(first, second).get(30, TimeUnit.SECONDS);
+            Optional<SupplyRuntimeClaim> firstClaim = first.get();
+            Optional<SupplyRuntimeClaim> secondClaim = second.get();
+            long claimed = java.util.stream.Stream.of(firstClaim, secondClaim)
+                    .filter(Optional::isPresent).count();
+            assertEquals(1, claimed);
+            SupplyRuntimeClaim stale = firstClaim.orElseGet(secondClaim::orElseThrow);
+            expireSupplyClaim(fulfillment.shipmentId());
+            SupplyRuntimeClaim replacement = repository.claimNext(
+                    "supply-restarted", Duration.ofSeconds(30)).orElseThrow();
+            assertNotEquals(stale.claimToken(), replacement.claimToken());
+            assertThrows(StaleSupplyRuntimeClaimException.class, () -> repository.dispatch(stale));
+            repository.dispatch(replacement);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private Optional<SupplyRuntimeClaim> claim(SupplyFulfillmentRepository repository, String worker) {
+        try {
+            return repository.claimNext(worker, Duration.ofSeconds(30));
+        } catch (SQLException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private void seedPaidSupplyOrder(UUID orderId, UUID restaurantId, UUID playerId) throws SQLException {
+        try (Connection connection = dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+            try (PreparedStatement order = connection.prepareStatement(
+                    "INSERT INTO supply_orders (order_id, operation_id, restaurant_id, player_id, catalog_version, total, state) VALUES (?, ?, ?, ?, 1, 100, 'SUBMITTED')")) {
+                order.setObject(1, orderId); order.setObject(2, UUID.randomUUID());
+                order.setObject(3, restaurantId); order.setObject(4, playerId); order.executeUpdate();
+            }
+            try (PreparedStatement payment = connection.prepareStatement(
+                    "INSERT INTO supply_payments (order_id, amount, state, capture_operation_id) VALUES (?, 100, 'CAPTURED', ?)")) {
+                payment.setObject(1, orderId); payment.setObject(2, UUID.randomUUID()); payment.executeUpdate();
+            }
+            try (PreparedStatement line = connection.prepareStatement(
+                    "INSERT INTO supply_order_lines (order_id, sku, display_name, unit, quantity, unit_price) VALUES (?, 'tomato', 'Tomato', 'PIECE', 4, 25)")) {
+                line.setObject(1, orderId); line.executeUpdate();
+            }
+            connection.commit();
+        }
+    }
+
+    private void expireSupplyClaim(UUID shipmentId) throws SQLException {
+        try (Connection connection = dataSource.getConnection(); PreparedStatement statement = connection.prepareStatement(
+                "UPDATE supply_shipments SET claim_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE shipment_id = ?")) {
+            statement.setObject(1, shipmentId); statement.executeUpdate();
+        }
     }
 
     private UUID fundedAssignedOwner() throws SQLException {

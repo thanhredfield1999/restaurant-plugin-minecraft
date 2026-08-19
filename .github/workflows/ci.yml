@@ -1,0 +1,88 @@
+name: RestaurantTycoon CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: restauranttycoon-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Java tests and PostgreSQL integration
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: restaurant_tycoon_ci
+          POSTGRES_USER: restaurant_tycoon_ci
+          POSTGRES_PASSWORD: restaurant_tycoon_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U restaurant_tycoon_ci -d restaurant_tycoon_ci"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      RT_TEST_POSTGRES_URL: jdbc:postgresql://localhost:5432/restaurant_tycoon_ci
+      RT_TEST_POSTGRES_USER: restaurant_tycoon_ci
+      RT_TEST_POSTGRES_PASSWORD: restaurant_tycoon_ci
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+
+      - name: Run unit tests and build
+        run: ./gradlew clean test build --no-daemon --console=plain
+
+      - name: Run PostgreSQL integration tests
+        run: ./gradlew postgresIntegrationTest --no-daemon --console=plain
+
+      - name: Upload plugin artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restaurant-tycoon-${{ github.sha }}
+          path: build/libs/restaurant-tycoon-*.jar
+          if-no-files-found: error
+          retention-days: 14
+
+  smoke-script:
+    name: PowerShell smoke-script guard
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Run PowerShell smoke guard regression
+        shell: pwsh
+        run: .\gradlew.bat paperSmokeGuardTest --no-daemon --console=plain
