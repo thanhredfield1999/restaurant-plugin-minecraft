@@ -33,12 +33,12 @@ function Invoke-Test {
 }
 
 Invoke-Test "Test-IsSmokePaperCommandLine matches the pinned smoke jar on java.exe" {
-    $result = Test-IsSmokePaperCommandLine -CommandLine "java -Xms512M -Xmx1G -jar `"C:\smoke\run\paper-smoke\paper-1.20.4-499.jar`" --nogui"
+    $result = Test-IsSmokePaperCommandLine -CommandLine "java -Xms512M -Xmx1G -jar `"C:\smoke\run\paper-smoke\paper-1.21.11-132.jar`" --nogui"
     if (-not $result) { throw "Expected a match for the pinned smoke jar." }
 }
 
 Invoke-Test "Test-IsSmokePaperCommandLine matches a javaw.exe smoke launch" {
-    $result = Test-IsSmokePaperCommandLine -CommandLine "javaw.exe -jar E:\run\paper-smoke\paper-1.20.4-499.jar --nogui"
+    $result = Test-IsSmokePaperCommandLine -CommandLine "javaw.exe -jar E:\run\paper-smoke\paper-1.21.11-132.jar --nogui"
     if (-not $result) { throw "Expected a match for a javaw.exe smoke launch." }
 }
 
@@ -48,7 +48,7 @@ Invoke-Test "Test-IsSmokePaperCommandLine does not match a Java Minecraft client
 }
 
 Invoke-Test "Test-IsSmokePaperCommandLine does not match a production Paper server" {
-    $result = Test-IsSmokePaperCommandLine -CommandLine "java -Xmx2G -jar C:\prod\paper-1.20.4-437.jar --nogui"
+    $result = Test-IsSmokePaperCommandLine -CommandLine "java -Xmx2G -jar C:\prod\paper-1.21.11-131.jar --nogui"
     if ($result) { throw "A production Paper jar must not match the pinned smoke jar." }
 }
 
@@ -91,7 +91,7 @@ Invoke-Test "Test-SmokePortListening rejects out-of-range ports" {
 
 Invoke-Test "Get-SmokePaperProcess completes within the bound and returns a collection" {
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-    $result = @(Get-SmokePaperProcess -PaperJarName "paper-1.20.4-499.jar" -QueryTimeoutSeconds 15)
+    $result = @(Get-SmokePaperProcess -PaperJarName "paper-1.21.11-132.jar" -QueryTimeoutSeconds 15)
     $stopwatch.Stop()
     if ($null -eq $result) { throw "Expected a collection result." }
     if ($stopwatch.Elapsed.TotalSeconds -ge 60) {
