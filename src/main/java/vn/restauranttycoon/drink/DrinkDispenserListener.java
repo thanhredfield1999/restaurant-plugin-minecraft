@@ -5,6 +5,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.List;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
@@ -151,6 +152,16 @@ public final class DrinkDispenserListener implements Listener {
     public void clear() {
         pendingPhysicsValidations.clear();
         controller.clearAll();
+    }
+
+    public List<DrinkStationStatus> stationStatuses() {
+        long now = clock.getAsLong();
+        return stations.values().stream()
+                .sorted(java.util.Comparator.comparing(DrinkStationSettings::stationId))
+                .map(station -> new DrinkStationStatus(
+                        station,
+                        controller.progress(station.stationId(), now)))
+                .toList();
     }
 
     void validateStationAfterPhysics(

@@ -16,8 +16,8 @@ final class SupplySetupMenuLayoutTest {
 
         assertEquals(25, blanks.size());
         assertTrue(blanks.contains(0));
-        assertFalse(blanks.contains(11));
-        assertFalse(blanks.contains(15));
+        assertFalse(blanks.contains(10));
+        assertFalse(blanks.contains(16));
     }
 
     @Test

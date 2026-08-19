@@ -16,7 +16,7 @@ import org.flywaydb.core.api.MigrationInfo;
 import vn.restauranttycoon.config.DatabaseSettings;
 
 public final class DatabaseManager implements AutoCloseable {
-    private static final String REQUIRED_SCHEMA_VERSION = "12";
+    private static final String REQUIRED_SCHEMA_VERSION = "17";
 
     private final DatabaseSettings settings;
     private final Logger logger;

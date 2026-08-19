@@ -21,6 +21,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
@@ -31,14 +32,19 @@ import vn.restauranttycoon.persistence.DatabaseState;
 
 public final class SupplySetupMenuController implements Listener {
     private static final Map<SupplySetupPointType, Integer> SLOTS = Map.of(
-            SupplySetupPointType.ORDER_DESK, 11,
-            SupplySetupPointType.SUPPLIER_SPAWN, 15,
+            SupplySetupPointType.ORDER_DESK, 10,
+            SupplySetupPointType.SUPPLIER_SPAWN, 16,
             SupplySetupPointType.DELIVERY_ENTRY, 10,
             SupplySetupPointType.DELIVERY_STOP, 11,
             SupplySetupPointType.UNLOAD_POINT, 12,
             SupplySetupPointType.WAREHOUSE_ENTRY, 14,
             SupplySetupPointType.DELIVERY_EXIT, 15,
             SupplySetupPointType.DELIVERY_DESPAWN, 16);
+
+    private static final int ACTION_SET_SLOT = 10;
+    private static final int ACTION_TELEPORT_SLOT = 12;
+    private static final int ACTION_DELETE_SLOT = 14;
+    private static final int ACTION_BACK_SLOT = 16;
 
     private final JavaPlugin plugin;
     private final DatabaseManager database;
@@ -115,13 +121,22 @@ public final class SupplySetupMenuController implements Listener {
     private void showMenu(Player player, SupplySetupOwner owner, List<SupplySetupPoint> points) {
         Map<SupplySetupPointType, SupplySetupPoint> byType = points.stream()
                 .collect(Collectors.toMap(SupplySetupPoint::type, point -> point));
-        MenuHolder holder = new MenuHolder(owner);
+        MenuHolder holder = new MenuHolder(owner, byType);
         String title = owner.scope() == SupplySetupScope.CENTRAL_SUPPLIER
                 ? messages.text("menu.central-title")
                 : messages.text("menu.restaurant-title", Map.of("restaurant", owner.ownerId()));
         Inventory inventory = Bukkit.createInventory(holder, SupplySetupMenuLayout.INVENTORY_SIZE, title);
         holder.attach(inventory);
         fillBlankSlots(inventory, layout.blankSlots(owner.scope()));
+        inventory.setItem(SupplySetupMenuLayout.STATUS_SLOT, readinessItem(owner, byType));
+        inventory.setItem(SupplySetupMenuLayout.VALIDATE_SLOT, namedItem(
+                Material.COMPASS,
+                ChatColor.AQUA + messages.text("menu.validate-name"),
+                splitLore(messages.text("menu.validate-lore"), ChatColor.GRAY)));
+        inventory.setItem(SupplySetupMenuLayout.CLOSE_SLOT, namedItem(
+                Material.BARRIER,
+                ChatColor.YELLOW + messages.text("menu.close-name"),
+                splitLore(messages.text("menu.close-lore"), ChatColor.GRAY)));
         for (SupplySetupPointType type : SupplySetupPointType.values()) {
             if (type.scope() != owner.scope()) {
                 continue;
@@ -149,21 +164,38 @@ public final class SupplySetupMenuController implements Listener {
             if (event.getClickedInventory() != event.getView().getTopInventory()) {
                 return;
             }
+            if (event.getSlot() == SupplySetupMenuLayout.CLOSE_SLOT) {
+                player.closeInventory();
+                return;
+            }
+            if (event.getSlot() == SupplySetupMenuLayout.VALIDATE_SLOT
+                    || event.getSlot() == SupplySetupMenuLayout.STATUS_SLOT) {
+                player.sendMessage(ChatColor.AQUA + messages.text("menu.validate-result",
+                        Map.of("status", readinessStatus(menu.owner(), menu.points()))));
+                return;
+            }
             if (menu.owner().scope() == SupplySetupScope.RESTAURANT
                     && event.getSlot() == SupplySetupMenuLayout.ROUTE_SLOT) {
                 routeOpener.accept(player, menu.owner().ownerId());
                 return;
             }
             SupplySetupPointType type = typeAt(menu.owner(), event.getSlot());
-            if (type == null) {
+            if (type != null) {
+                openPointActions(player, menu.owner(), type);
+            }
+        } else if (holder instanceof PointActionHolder actions) {
+            event.setCancelled(true);
+            if (event.getClickedInventory() != event.getView().getTopInventory()) {
                 return;
             }
-            if (event.isShiftClick() && event.isRightClick()) {
-                showDeleteConfirmation(player, menu.owner(), type);
-            } else if (event.isLeftClick()) {
-                saveCurrentPosition(player, menu.owner(), type);
-            } else if (event.isRightClick()) {
-                teleport(player, menu.owner(), type);
+            if (event.getSlot() == ACTION_BACK_SLOT) {
+                open(player, actions.owner());
+            } else if (event.getSlot() == ACTION_SET_SLOT) {
+                saveCurrentPosition(player, actions.owner(), actions.type());
+            } else if (event.getSlot() == ACTION_TELEPORT_SLOT) {
+                teleport(player, actions.owner(), actions.type());
+            } else if (event.getSlot() == ACTION_DELETE_SLOT) {
+                showDeleteConfirmation(player, actions.owner(), actions.type());
             }
         } else if (holder instanceof ConfirmDeleteHolder confirmation) {
             event.setCancelled(true);
@@ -175,6 +207,15 @@ public final class SupplySetupMenuController implements Listener {
             } else if (event.getSlot() == 15) {
                 open(player, confirmation.owner());
             }
+        }
+    }
+
+    @EventHandler
+    public void onInventoryDrag(InventoryDragEvent event) {
+        InventoryHolder holder = event.getView().getTopInventory().getHolder();
+        if (holder instanceof MenuHolder || holder instanceof PointActionHolder
+                || holder instanceof ConfirmDeleteHolder) {
+            event.setCancelled(true);
         }
     }
 
@@ -236,6 +277,27 @@ public final class SupplySetupMenuController implements Listener {
                             position.yaw(),
                             position.pitch()));
                 }));
+    }
+
+    private void openPointActions(Player player, SupplySetupOwner owner, SupplySetupPointType type) {
+        PointActionHolder holder = new PointActionHolder(owner, type);
+        Inventory inventory = Bukkit.createInventory(holder, SupplySetupMenuLayout.INVENTORY_SIZE,
+                messages.text("action.title", Map.of("point", pointName(type))));
+        holder.attach(inventory);
+        fillBlankSlots(inventory, layout.confirmBlankSlots());
+        inventory.setItem(ACTION_SET_SLOT, namedItem(Material.LIME_WOOL,
+                ChatColor.GREEN + messages.text("action.set-name"),
+                splitLore(messages.text("action.set-lore"), ChatColor.GRAY)));
+        inventory.setItem(ACTION_TELEPORT_SLOT, namedItem(Material.ENDER_PEARL,
+                ChatColor.AQUA + messages.text("action.teleport-name"),
+                splitLore(messages.text("action.teleport-lore"), ChatColor.GRAY)));
+        inventory.setItem(ACTION_DELETE_SLOT, namedItem(Material.RED_CONCRETE,
+                ChatColor.RED + messages.text("action.delete-name"),
+                splitLore(messages.text("action.delete-lore"), ChatColor.RED)));
+        inventory.setItem(ACTION_BACK_SLOT, namedItem(Material.BARRIER,
+                ChatColor.YELLOW + messages.text("action.cancel-name"),
+                splitLore(messages.text("action.cancel-lore"), ChatColor.GRAY)));
+        player.openInventory(inventory);
     }
 
     private void showDeleteConfirmation(
@@ -317,6 +379,39 @@ public final class SupplySetupMenuController implements Listener {
         }
     }
 
+    private ItemStack readinessItem(
+            SupplySetupOwner owner,
+            Map<SupplySetupPointType, SupplySetupPoint> points
+    ) {
+        int required = owner.scope() == SupplySetupScope.CENTRAL_SUPPLIER ? 2 : 6;
+        int configured = (int) points.keySet().stream()
+                .filter(type -> type.scope() == owner.scope())
+                .count();
+        boolean complete = configured >= required;
+        Material material = complete ? Material.LIME_CONCRETE : Material.YELLOW_CONCRETE;
+        ChatColor color = complete ? ChatColor.GREEN : ChatColor.YELLOW;
+        return namedItem(material,
+                color + messages.text(complete ? "menu.ready-name" : "menu.incomplete-name"),
+                splitLore(messages.text("menu.progress-lore", Map.of(
+                        "configured", Integer.toString(configured),
+                        "required", Integer.toString(required))), ChatColor.GRAY));
+    }
+
+    private String readinessStatus(
+            SupplySetupOwner owner,
+            Map<SupplySetupPointType, SupplySetupPoint> points
+    ) {
+        int required = owner.scope() == SupplySetupScope.CENTRAL_SUPPLIER ? 2 : 6;
+        int configured = (int) points.keySet().stream()
+                .filter(type -> type.scope() == owner.scope())
+                .count();
+        return configured >= required
+                ? messages.text("menu.ready-name")
+                : messages.text("menu.incomplete-result", Map.of(
+                        "configured", Integer.toString(configured),
+                        "required", Integer.toString(required)));
+    }
+
     private ItemStack pointItem(SupplySetupPointView view) {
         Material material = view.status() == SupplySetupPointStatus.CONFIGURED
                 ? Material.LIME_CONCRETE
@@ -378,14 +473,51 @@ public final class SupplySetupMenuController implements Listener {
 
     private static final class MenuHolder implements InventoryHolder {
         private final SupplySetupOwner owner;
+        private final Map<SupplySetupPointType, SupplySetupPoint> points;
         private Inventory inventory;
 
-        private MenuHolder(SupplySetupOwner owner) {
+        private MenuHolder(
+                SupplySetupOwner owner,
+                Map<SupplySetupPointType, SupplySetupPoint> points
+        ) {
             this.owner = owner;
+            this.points = Map.copyOf(points);
+        }
+
+        private Map<SupplySetupPointType, SupplySetupPoint> points() {
+            return points;
         }
 
         private SupplySetupOwner owner() {
             return owner;
+        }
+
+        private void attach(Inventory inventory) {
+            this.inventory = inventory;
+        }
+
+        @Override
+        public Inventory getInventory() {
+            return Objects.requireNonNull(inventory, "inventory");
+        }
+    }
+
+    private static final class PointActionHolder implements InventoryHolder {
+        private final SupplySetupOwner owner;
+        private final SupplySetupPointType type;
+        private Inventory inventory;
+
+        private PointActionHolder(SupplySetupOwner owner, SupplySetupPointType type) {
+            this.owner = owner;
+            this.type = type;
+        }
+
+        private SupplySetupOwner owner() {
+            return owner;
+        }
+
+        private SupplySetupPointType type() {
+            return type;
         }
 
         private void attach(Inventory inventory) {

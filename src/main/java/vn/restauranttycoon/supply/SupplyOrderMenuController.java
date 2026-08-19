@@ -14,6 +14,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
@@ -106,6 +107,14 @@ public final class SupplyOrderMenuController implements Listener, AutoCloseable 
             if (event.getClickedInventory() != event.getView().getTopInventory()) return;
             if (event.getSlot() == 11) submit(player, confirmation.order);
             if (event.getSlot() == 15) show(player, confirmation.order);
+        }
+    }
+
+    @EventHandler
+    public void onDrag(InventoryDragEvent event) {
+        InventoryHolder holder = event.getView().getTopInventory().getHolder();
+        if (holder instanceof OrderHolder || holder instanceof ConfirmHolder) {
+            event.setCancelled(true);
         }
     }
 

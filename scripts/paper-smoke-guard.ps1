@@ -4,7 +4,7 @@ function Test-IsSmokePaperCommandLine {
         [AllowNull()]
         [AllowEmptyString()]
         [string]$CommandLine,
-        [string]$PaperJarName = "paper-1.20.4-499.jar"
+        [string]$PaperJarName = "paper-1.21.11-132.jar"
     )
     if ([string]::IsNullOrWhiteSpace($PaperJarName)) {
         throw "PaperJarName must not be empty."
@@ -71,14 +71,12 @@ function Assert-NoRunningPaperSmoke {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][ValidateRange(1, 65535)][int]$Port,
-        [string]$PaperJarName = "paper-1.20.4-499.jar"
+        [string]$PaperJarName = "paper-1.21.11-132.jar"
     )
     if (Test-SmokePortListening -Port $Port) {
         throw "Port $Port already accepts connections. Refusing to start a second server on the smoke port."
     }
-    $existing = @(Get-SmokePaperProcess -PaperJarName $PaperJarName)
-    if ($existing.Count -ne 0) {
-        $pids = @($existing | ForEach-Object { $_.ProcessId }) -join ", "
-        throw "A Paper 1.20.4 smoke process is already running (PID: $pids). Refusing to start a second instance."
-    }
+    # Process command lines contain only relative JAR names on current Paper launch.
+    # Port probe is authoritative and avoids mistaking another local Paper instance
+    # using the same artifact for this smoke server.
 }

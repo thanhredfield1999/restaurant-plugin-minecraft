@@ -8,6 +8,15 @@ supply-setup:
     players-only: "Chỉ người chơi mới có thể mở GUI thiết lập."
     no-permission: "Bạn không có quyền thiết lập hệ thống nhập hàng."
     usage: "Dùng: /restaurant setup <central|plotId>"
+    validate-name: "Kiểm tra cấu hình"
+    validate-lore: "Kiểm tra các điểm bắt buộc đã được đặt."
+    close-name: "Đóng"
+    close-lore: "Đóng trình thiết lập mà không thay đổi dữ liệu."
+    ready-name: "Sẵn sàng"
+    incomplete-name: "Chưa hoàn tất"
+    progress-lore: "Tiến độ: {configured}/{required} điểm bắt buộc"
+    validate-result: "Kết quả kiểm tra: {status}"
+    incomplete-result: "Còn thiếu ({configured}/{required})"
   point:
     ORDER_DESK:
       name: "Bàn tiếp nhận đơn"
@@ -39,10 +48,18 @@ supply-setup:
   lore:
     status: "Trạng thái: {status}"
     location: "Vị trí: {world} ({x}, {y}, {z})"
-    set: "Chuột trái: Đặt tại vị trí hiện tại"
-    teleport: "Chuột phải: Dịch chuyển tới điểm"
-    delete: "Shift + chuột phải: Mở xác nhận xóa"
-    overwrite-warning: "Cảnh báo: Chuột trái sẽ ghi đè điểm hiện tại"
+    open-actions: "Nhấp để mở các thao tác"
+    configured-hint: "Đã có điểm: có thể đặt lại, kiểm tra hoặc tháo"
+  action:
+    title: "Thao tác: {point}"
+    set-name: "Đặt tại vị trí hiện tại"
+    set-lore: "Lưu tọa độ hiện tại của bạn.|Nếu đã có, thao tác này sẽ đặt lại điểm."
+    teleport-name: "Dịch chuyển tới điểm"
+    teleport-lore: "Đưa bạn tới vị trí đã lưu để kiểm tra."
+    delete-name: "Tháo vị trí"
+    delete-lore: "Xóa vị trí đã lưu sau bước xác nhận."
+    cancel-name: "Hủy / Quay lại"
+    cancel-lore: "Không thay đổi dữ liệu và quay lại danh sách điểm."
   feedback:
     saved: "Đã lưu {point}."
     deleted: "Đã xóa {point}."

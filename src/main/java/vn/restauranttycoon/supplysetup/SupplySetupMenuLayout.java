@@ -11,13 +11,16 @@ public final class SupplySetupMenuLayout {
     public static final int CONFIRM_DELETE_SLOT = 11;
     public static final int CONFIRM_CANCEL_SLOT = 15;
     public static final int ROUTE_SLOT = 22;
+    public static final int STATUS_SLOT = 4;
+    public static final int VALIDATE_SLOT = 13;
+    public static final int CLOSE_SLOT = 26;
 
     private static final Map<SupplySetupPointType, Integer> POINT_SLOTS;
 
     static {
         Map<SupplySetupPointType, Integer> slots = new EnumMap<>(SupplySetupPointType.class);
-        slots.put(SupplySetupPointType.ORDER_DESK, 11);
-        slots.put(SupplySetupPointType.SUPPLIER_SPAWN, 15);
+        slots.put(SupplySetupPointType.ORDER_DESK, 10);
+        slots.put(SupplySetupPointType.SUPPLIER_SPAWN, 16);
         slots.put(SupplySetupPointType.DELIVERY_ENTRY, 10);
         slots.put(SupplySetupPointType.DELIVERY_STOP, 11);
         slots.put(SupplySetupPointType.UNLOAD_POINT, 12);

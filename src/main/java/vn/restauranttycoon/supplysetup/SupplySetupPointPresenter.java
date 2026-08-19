@@ -29,11 +29,9 @@ public final class SupplySetupPointPresenter {
                 "status", messages.text("status." + status.name()))));
         configuredPoint.ifPresent(point -> lore.add(location(point.position())));
         lore.add("");
-        lore.add(messages.text("lore.set"));
-        lore.add(messages.text("lore.teleport"));
-        lore.add(messages.text("lore.delete"));
+        lore.add(messages.text("lore.open-actions"));
         if (configuredPoint.isPresent()) {
-            lore.add(messages.text("lore.overwrite-warning"));
+            lore.add(messages.text("lore.configured-hint"));
         }
         return new SupplySetupPointView(
                 messages.text("point." + type.name() + ".name"),

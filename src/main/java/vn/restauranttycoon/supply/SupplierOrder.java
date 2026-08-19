@@ -64,6 +64,33 @@ public final class SupplierOrder {
         return copy(next, state, transitionOperation);
     }
 
+    public SupplierOrder withMarketPrices(java.util.Map<String, CurrencyAmount> prices) {
+        requireState(SupplierOrderState.DRAFT);
+        Objects.requireNonNull(prices, "prices");
+        Map<String, SupplierOrderLine> next = new LinkedHashMap<>();
+        for (SupplierOrderLine line : lines.values()) {
+            CurrencyAmount price = prices.get(line.sku());
+            if (price == null) throw new IllegalArgumentException("Missing market price: " + line.sku());
+            next.put(line.sku(), new SupplierOrderLine(
+                    line.sku(), line.displayName(), line.unit(), line.quantity(), price));
+        }
+        return copy(next, state, transitionOperation);
+    }
+
+    public SupplierOrder repriceMarket(java.util.Map<String, CurrencyAmount> prices) {
+        if (state != SupplierOrderState.SUBMITTED) {
+            throw new IllegalStateException("Only submitted orders can be repriced");
+        }
+        Objects.requireNonNull(prices, "prices");
+        Map<String, SupplierOrderLine> next = new LinkedHashMap<>();
+        for (SupplierOrderLine line : lines.values()) {
+            CurrencyAmount price = prices.get(line.sku());
+            if (price == null) throw new IllegalArgumentException("Missing market price: " + line.sku());
+            next.put(line.sku(), new SupplierOrderLine(line.sku(), line.displayName(), line.unit(), line.quantity(), price));
+        }
+        return copy(next, state, transitionOperation);
+    }
+
     public SupplierOrder submit(UUID operationId) {
         Objects.requireNonNull(operationId, "operationId");
         if (state == SupplierOrderState.SUBMITTED && operationId.equals(transitionOperation)) {

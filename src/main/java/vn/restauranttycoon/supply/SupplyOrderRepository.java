@@ -7,7 +7,13 @@ import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.time.Instant;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import javax.sql.DataSource;
+import vn.restauranttycoon.market.MarketPrice;
+import vn.restauranttycoon.economy.CurrencyAmount;
+import vn.restauranttycoon.market.MarketRepository;
 import vn.restauranttycoon.economy.EconomyRepository;
 import vn.restauranttycoon.economy.LedgerResult;
 import vn.restauranttycoon.economy.OperationKey;
@@ -18,10 +24,12 @@ public final class SupplyOrderRepository {
 
     private final DataSource dataSource;
     private final EconomyRepository economy;
+    private final MarketRepository market;
 
     public SupplyOrderRepository(DataSource dataSource) {
         this.dataSource = Objects.requireNonNull(dataSource, "dataSource");
         this.economy = new EconomyRepository(dataSource);
+        this.market = new MarketRepository(dataSource);
     }
 
     public SupplyOrderReceipt capture(
@@ -59,6 +67,90 @@ public final class SupplyOrderRepository {
                 throw exception;
             }
         }
+    }
+
+    public SupplyOrderReceipt captureMarket(
+            UUID orderId, SupplierOrder submittedOrder, OperationKey captureOperation,
+            IngredientCatalog authoritativeCatalog, Instant now
+    ) throws SQLException {
+        requireAuthoritativeSnapshot(submittedOrder, authoritativeCatalog);
+        try (Connection connection = dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                SupplyOrderReceipt receipt = captureMarket(connection, orderId, submittedOrder, captureOperation, now);
+                connection.commit();
+                return receipt;
+            } catch (SQLException | RuntimeException exception) {
+                connection.rollback();
+                throw exception;
+            }
+        }
+    }
+
+    public SupplyOrderReceipt captureMarketAuthorized(
+            String plotId, UUID orderId, SupplierOrder submittedOrder, OperationKey captureOperation,
+            IngredientCatalog authoritativeCatalog, Instant now
+    ) throws SQLException {
+        if (plotId == null || !plotId.matches("[A-Za-z0-9_-]{1,64}")) {
+            throw new IllegalArgumentException("Invalid plot ID");
+        }
+        Objects.requireNonNull(submittedOrder, "submittedOrder");
+        Objects.requireNonNull(captureOperation, "captureOperation");
+        Objects.requireNonNull(now, "now");
+        requireAuthoritativeSnapshot(submittedOrder, authoritativeCatalog);
+        if (!submittedOrder.restaurantId().equals(submittedOrder.playerId())) {
+            throw new SupplyOrderAuthorizationException("Restaurant identity does not match the ordering player");
+        }
+        try (Connection connection = dataSource.getConnection()) {
+            connection.setAutoCommit(false);
+            try {
+                requirePlotOwnership(connection, plotId, submittedOrder.playerId());
+                requireCompleteSetup(connection, plotId);
+                SupplyOrderReceipt receipt = captureMarket(
+                        connection, orderId, submittedOrder, captureOperation, now);
+                connection.commit();
+                return receipt;
+            } catch (SQLException | RuntimeException exception) {
+                connection.rollback();
+                throw exception;
+            }
+        }
+    }
+
+    private SupplyOrderReceipt captureMarket(
+            Connection connection, UUID orderId, SupplierOrder submittedOrder,
+            OperationKey captureOperation, Instant now
+    ) throws SQLException {
+        ExistingMarketOrder existing = findExistingMarketOrder(connection, captureOperation.value());
+        if (existing != null) {
+            requireExistingMarketLines(connection, existing.orderId(), submittedOrder);
+            LedgerResult payment = economy.apply(connection, submittedOrder.playerId(), captureOperation,
+                    Math.negateExact(existing.total()), PAYMENT_REASON);
+            return new SupplyOrderReceipt(existing.orderId(), payment.balance(), true);
+        }
+        Map<String, MarketPrice> prices = market.lockPrices(connection,
+                submittedOrder.lines().stream().map(SupplierOrderLine::sku).toList(), now);
+        Map<String, CurrencyAmount> amounts = prices.entrySet().stream().collect(
+                java.util.stream.Collectors.toMap(Map.Entry::getKey,
+                        entry -> new CurrencyAmount(entry.getValue().unitPrice())));
+        SupplierOrder order = submittedOrder.repriceMarket(amounts);
+        for (SupplierOrderLine line : order.lines()) {
+            UUID demandOperation = UUID.nameUUIDFromBytes(
+                    (captureOperation.value() + ":" + line.sku()).getBytes(StandardCharsets.UTF_8));
+            market.recordPurchase(connection, new OperationKey(demandOperation),
+                    line.sku(), line.quantity(), now);
+        }
+        LedgerResult payment = economy.apply(connection, order.playerId(), captureOperation,
+                Math.negateExact(order.total().units()), PAYMENT_REASON);
+        if (!payment.duplicate()) {
+            insertOrder(connection, orderId, order, captureOperation.value());
+            insertMarketLines(connection, orderId, order, prices);
+            insertPayment(connection, orderId, order, captureOperation.value());
+            createFulfillment(connection, orderId, order.restaurantId());
+        } else {
+            requireExistingOrder(connection, orderId, order, captureOperation.value());
+        }
+        return new SupplyOrderReceipt(orderId, payment.balance(), payment.duplicate());
     }
 
     public SupplyOrderReceipt captureAuthorized(
@@ -274,6 +366,74 @@ public final class SupplyOrderRepository {
         }
     }
 
+    private ExistingMarketOrder findExistingMarketOrder(Connection connection, UUID operationId)
+            throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT order_id, total FROM supply_orders WHERE operation_id = ? FOR UPDATE")) {
+            statement.setObject(1, operationId);
+            try (var result = statement.executeQuery()) {
+                return result.next()
+                        ? new ExistingMarketOrder(result.getObject(1, UUID.class), result.getLong(2))
+                        : null;
+            }
+        }
+    }
+
+    private void requireExistingMarketLines(
+            Connection connection, UUID orderId, SupplierOrder submittedOrder) throws SQLException {
+        Map<String, Integer> expected = submittedOrder.lines().stream().collect(
+                java.util.stream.Collectors.toMap(SupplierOrderLine::sku, SupplierOrderLine::quantity));
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT sku, quantity, market_cycle_id, price_snapshot FROM supply_order_lines WHERE order_id = ?")) {
+            statement.setObject(1, orderId);
+            try (var result = statement.executeQuery()) {
+                int count = 0;
+                while (result.next()) {
+                    count++;
+                    Integer quantity = expected.get(result.getString(1));
+                    if (quantity == null || quantity != result.getInt(2)
+                            || result.getObject(3) == null || result.getLong(4) <= 0) {
+                        throw new SupplyOrderOperationConflictException(
+                                "Market retry does not match existing immutable snapshot");
+                    }
+                }
+                if (count != expected.size()) {
+                    throw new SupplyOrderOperationConflictException(
+                            "Market retry line count does not match existing order");
+                }
+            }
+        }
+    }
+
+    private record ExistingMarketOrder(UUID orderId, long total) {
+    }
+
+    private void insertMarketLines(
+            Connection connection,
+            UUID orderId,
+            SupplierOrder order,
+            Map<String, MarketPrice> prices
+    ) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "INSERT INTO supply_order_lines "
+                        + "(order_id, sku, display_name, unit, quantity, unit_price, market_cycle_id, price_snapshot) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) {
+            for (SupplierOrderLine line : order.lines()) {
+                MarketPrice price = prices.get(line.sku());
+                statement.setObject(1, orderId);
+                statement.setString(2, line.sku());
+                statement.setString(3, line.displayName());
+                statement.setString(4, line.unit().name());
+                statement.setInt(5, line.quantity());
+                statement.setLong(6, price.unitPrice());
+                statement.setObject(7, price.cycleId());
+                statement.setLong(8, price.unitPrice());
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
     private void insertPayment(
             Connection connection, UUID orderId, SupplierOrder order, UUID operationId) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
@@ -325,6 +485,15 @@ public final class SupplyOrderRepository {
             if (statement.executeUpdate() == 0) {
                 throw new IllegalStateException("Submitted order has no order lines");
             }
+        }
+        try (PreparedStatement statement = connection.prepareStatement("""
+                INSERT INTO supply_shipment_runtime
+                    (shipment_id, revision, checkpoint_stage, journey_snapshot_version,
+                     journey_snapshot, recovery_outcome)
+                VALUES (?, 1, 'PENDING_MANUAL', 1, '{"schema":"route-not-pinned"}', 'PENDING_MANUAL')
+                """)) {
+            statement.setObject(1, shipmentId);
+            statement.executeUpdate();
         }
     }
 }

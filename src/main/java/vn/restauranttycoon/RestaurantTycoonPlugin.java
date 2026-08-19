@@ -43,12 +43,25 @@ import vn.restauranttycoon.worldoperation.WorldOperationRepository;
 import vn.restauranttycoon.worldoperation.WorldOperationWorker;
 import vn.restauranttycoon.supplysetup.SupplySetupMenuController;
 import vn.restauranttycoon.supply.SupplyFulfillmentRepository;
+import vn.restauranttycoon.supply.SupplyRuntimeClaimWorker;
+import vn.restauranttycoon.supply.SupplyRuntimeClaimProjectionDispatcher;
+import vn.restauranttycoon.supply.SupplyRuntimeProjectionLoader;
+import vn.restauranttycoon.supply.SupplyRuntimeFixtureRepository;
 import vn.restauranttycoon.supply.SupplyRuntimeCoordinator;
 import vn.restauranttycoon.supply.SupplyRuntimeWork;
 import vn.restauranttycoon.supply.BukkitIngredientCatalogLoader;
 import vn.restauranttycoon.supply.IngredientCatalog;
 import vn.restauranttycoon.supply.SupplyOrderMenuController;
 import vn.restauranttycoon.supplysetup.SupplyRouteMenuController;
+import vn.restauranttycoon.menu.RestaurantMenuController;
+import vn.restauranttycoon.hologram.DecentDrinkStationHolograms;
+import vn.restauranttycoon.market.MarketMenuController;
+import vn.restauranttycoon.market.SupplierVillagerListener;
+import vn.restauranttycoon.supply.PackageInteractionListener;
+import vn.restauranttycoon.supply.WarehouseInteractionListener;
+import vn.restauranttycoon.supply.SupplyVillagerRegistryListener;
+import vn.restauranttycoon.supply.SupplyVillagerRegistry;
+import vn.restauranttycoon.supply.SupplyVanillaVillagerAdapter;
 
 public final class RestaurantTycoonPlugin extends JavaPlugin {
     private static final String FIXTURE_PROPERTY = "restauranttycoon.testFixtures";
@@ -66,11 +79,23 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
     private StageManifest stageManifest;
     private OnboardingListener onboardingListener;
     private DrinkDispenserListener drinkDispenserListener;
+    private DecentDrinkStationHolograms drinkStationHolograms;
     private SupplySetupMenuController supplySetupMenuController;
     private SupplyRouteMenuController supplyRouteMenuController;
-    private SupplyRuntimeCoordinator supplyRuntimeCoordinator;
+    private SupplyRuntimeClaimWorker supplyRuntimeClaimWorker;
+    private SupplyRuntimeClaimProjectionDispatcher supplyRuntimeClaimProjectionDispatcher;
+    private SupplyRuntimeFixtureRepository supplyRuntimeFixtureRepository;
+    private SupplyVillagerRegistryListener supplyVillagerRegistryListener;
+    private SupplyVillagerRegistry supplyVillagerRegistry;
+    private SupplyVanillaVillagerAdapter supplyVillagerAdapter;
     private SupplyOrderMenuController supplyOrderMenuController;
+    private MarketMenuController marketMenuController;
+    private SupplierVillagerListener supplierVillagerListener;
+    private PackageInteractionListener packageInteractionListener;
+    private WarehouseInteractionListener warehouseInteractionListener;
+    private RestaurantMenuController restaurantMenuController;
     private BukkitTask supplyRuntimePollTask;
+    private BukkitTask drinkStationHologramTask;
     private BukkitTask worldOperationPollTask;
     private final AtomicBoolean worldOperationInFlight = new AtomicBoolean(false);
     private final AtomicBoolean fixtureCrashArmed = new AtomicBoolean(false);
@@ -94,6 +119,7 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
         Objects.requireNonNull(getCommand("restaurant")).setExecutor(this);
         drinkDispenserListener = new DrinkDispenserListener(settings.drinkDispensers(), this);
         getServer().getPluginManager().registerEvents(drinkDispenserListener, this);
+        startDrinkStationHolograms();
         database = new DatabaseManager(settings.database(), getLogger());
         economy = new EconomyService(database);
         plotAssignments = new PlotAssignmentService(database);
@@ -101,6 +127,32 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
         supplyOrderMenuController = new SupplyOrderMenuController(
                 this, database, ingredientCatalog);
         getServer().getPluginManager().registerEvents(supplyOrderMenuController, this);
+        marketMenuController = new MarketMenuController(this, database, ingredientCatalog);
+        getServer().getPluginManager().registerEvents(marketMenuController, this);
+        supplierVillagerListener = new SupplierVillagerListener(
+                new org.bukkit.NamespacedKey(this, "supplier_villager"), marketMenuController);
+        getServer().getPluginManager().registerEvents(supplierVillagerListener, this);
+        supplyVillagerRegistry = new vn.restauranttycoon.supply.SupplyVillagerRegistry();
+        supplyVillagerAdapter = new vn.restauranttycoon.supply.SupplyVanillaVillagerAdapter(this, supplyVillagerRegistry);
+        supplyVillagerRegistryListener = new vn.restauranttycoon.supply.SupplyVillagerRegistryListener(
+                supplyVillagerAdapter, supplyVillagerRegistry);
+        getServer().getPluginManager().registerEvents(supplyVillagerRegistryListener, this);
+        packageInteractionListener = new PackageInteractionListener(
+                this, database, new org.bukkit.NamespacedKey(this, "supply_package_id"));
+        getServer().getPluginManager().registerEvents(packageInteractionListener, this);
+        warehouseInteractionListener = new WarehouseInteractionListener(
+                this, database,
+                new org.bukkit.NamespacedKey(this, "supply_warehouse"),
+                new org.bukkit.NamespacedKey(this, "supply_package_id"));
+        getServer().getPluginManager().registerEvents(warehouseInteractionListener, this);
+        restaurantMenuController = new RestaurantMenuController(
+                this,
+                economy,
+                settings.plots().stream()
+                        .map(vn.restauranttycoon.config.PlotSettings::plotId)
+                        .toList(),
+                (player, plotId) -> openSupplyOrder(player, plotId));
+        getServer().getPluginManager().registerEvents(restaurantMenuController, this);
         supplyRouteMenuController = new SupplyRouteMenuController(
                 this,
                 database,
@@ -137,6 +189,18 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
             onboardingListener.close();
             onboardingListener = null;
         }
+        if (drinkStationHologramTask != null) {
+            drinkStationHologramTask.cancel();
+            drinkStationHologramTask = null;
+        }
+        if (drinkStationHolograms != null) {
+            try {
+                drinkStationHolograms.close();
+            } catch (LinkageError | RuntimeException exception) {
+                getLogger().warning("Station hologram cleanup failed: " + exception.getMessage());
+            }
+            drinkStationHolograms = null;
+        }
         if (drinkDispenserListener != null) {
             drinkDispenserListener.clear();
             drinkDispenserListener = null;
@@ -147,6 +211,20 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
             supplyOrderMenuController.close();
             supplyOrderMenuController = null;
         }
+        restaurantMenuController = null;
+        if (marketMenuController != null) {
+            marketMenuController.close();
+            marketMenuController = null;
+        }
+        supplierVillagerListener = null;
+        packageInteractionListener = null;
+        warehouseInteractionListener = null;
+        if (supplyVillagerRegistry != null) {
+            supplyVillagerRegistry.clear();
+            supplyVillagerRegistry = null;
+        }
+        supplyVillagerRegistryListener = null;
+        supplyVillagerAdapter = null;
         if (worldOperationPollTask != null) {
             worldOperationPollTask.cancel();
             worldOperationPollTask = null;
@@ -155,10 +233,12 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
             supplyRuntimePollTask.cancel();
             supplyRuntimePollTask = null;
         }
-        if (supplyRuntimeCoordinator != null) {
-            supplyRuntimeCoordinator.close();
+        if (supplyRuntimeClaimWorker != null) {
+            supplyRuntimeClaimWorker.close();
+            supplyRuntimeClaimWorker = null;
         }
-        supplyRuntimeCoordinator = null;
+        supplyRuntimeClaimProjectionDispatcher = null;
+        supplyRuntimeFixtureRepository = null;
         if (database != null) {
             database.close();
         }
@@ -174,6 +254,54 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
         } catch (java.io.IOException exception) {
             throw new IllegalStateException("Could not close stages.yml", exception);
         }
+    }
+
+    private void startDrinkStationHolograms() {
+        if (!getServer().getPluginManager().isPluginEnabled("DecentHolograms")) {
+            getLogger().info("DecentHolograms unavailable; station holograms disabled");
+            return;
+        }
+        drinkStationHolograms = new DecentDrinkStationHolograms(drinkDispenserListener);
+        if (!refreshDrinkStationHolograms()) {
+            return;
+        }
+        drinkStationHologramTask = getServer().getScheduler().runTaskTimer(
+                this,
+                this::refreshDrinkStationHolograms,
+                1L,
+                20L);
+        getLogger().info("DecentHolograms station progress enabled");
+    }
+
+    private boolean refreshDrinkStationHolograms() {
+        if (!getServer().getPluginManager().isPluginEnabled("DecentHolograms")) {
+            disableDrinkStationHolograms("DecentHolograms is no longer enabled");
+            return false;
+        }
+        try {
+            Objects.requireNonNull(drinkStationHolograms).refresh();
+            return true;
+        } catch (LinkageError | RuntimeException exception) {
+            disableDrinkStationHolograms("provider call failed: " + exception.getMessage());
+            return false;
+        }
+    }
+
+    private void disableDrinkStationHolograms(String reason) {
+        if (drinkStationHologramTask != null) {
+            drinkStationHologramTask.cancel();
+            drinkStationHologramTask = null;
+        }
+        if (drinkStationHolograms != null) {
+            try {
+                drinkStationHolograms.close();
+            } catch (LinkageError | RuntimeException exception) {
+                getLogger().warning("Station hologram cleanup after provider failure failed: "
+                        + exception.getMessage());
+            }
+            drinkStationHolograms = null;
+        }
+        getLogger().warning("DecentHolograms station integration disabled: " + reason);
     }
 
     private void startWorldOperationWorker(
@@ -228,17 +356,45 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
 
     private void startSupplyRuntimeCoordinator() {
         SupplyFulfillmentRepository repository = new SupplyFulfillmentRepository(database.requireDataSource());
-        supplyRuntimeCoordinator = new SupplyRuntimeCoordinator(
+        supplyRuntimeFixtureRepository = new SupplyRuntimeFixtureRepository(database.requireDataSource());
+        SupplyRuntimeProjectionLoader projectionLoader = new SupplyRuntimeProjectionLoader(repository);
+        SupplyRuntimeClaimProjectionDispatcher projectionDispatcher = new SupplyRuntimeClaimProjectionDispatcher(
+                claim -> projectionLoader.load(new SupplyRuntimeWork(
+                        claim.shipmentId(), claim.packageId(), claim.restaurantId(),
+                        claim.shipmentState(), claim.packageState())),
+                task -> getServer().getScheduler().runTask(this, task),
+                projection -> getLogger().info(() -> "SUPPLY_RUNTIME_PROJECTION_DISPATCHED shipment="
+                        + projection.shipmentId() + " stage=" + projection.checkpointStage()
+                        + " index=" + projection.checkpointIndex() + " movement=disabled"));
+        supplyRuntimeClaimProjectionDispatcher = projectionDispatcher;
+        SupplyRuntimeClaimWorker worker = new SupplyRuntimeClaimWorker(
                 repository,
                 database.executor(),
-                work -> getLogger().info(() -> "Durable supply work pending: " + work.shipmentId()
-                        + " state=" + work.shipmentState()));
+                settings.worldOperations().instanceId(),
+                Duration.ofSeconds(settings.worldOperations().leaseSeconds()),
+                claim -> {
+                    try {
+                        projectionDispatcher.handle(claim);
+                    } catch (Exception exception) {
+                        getLogger().warning("Supply runtime projection dispatch failed: "
+                                + rootMessage(exception));
+                    }
+                });
+        supplyRuntimeClaimWorker = worker;
         supplyRuntimePollTask = getServer().getScheduler().runTaskTimer(
                 this,
-                () -> supplyRuntimeCoordinator.poll(),
+                () -> worker.runOnce().whenComplete((result, error) -> {
+                    if (error != null && isEnabled()) {
+                        getLogger().warning("Supply runtime claim failed: " + rootMessage(error));
+                    } else if (result == SupplyRuntimeClaimWorker.SupplyRuntimeClaimResult.DISPATCHED) {
+                        getLogger().info("Supply shipment claimed and dispatched to IN_TRANSIT");
+                    } else if (result == SupplyRuntimeClaimWorker.SupplyRuntimeClaimResult.PENDING_MANUAL) {
+                        getLogger().warning("Supply shipment moved to PENDING_MANUAL: runtime snapshot missing or invalid");
+                    }
+                }),
                 20L,
                 20L);
-        getLogger().info("Supply runtime coordinator started; Citizens adapter remains disabled until runtime contract is configured");
+        getLogger().info("Supply runtime claim worker started; Citizens adapter remains disabled until runtime contract is configured");
     }
 
     private void startOnboarding() {
@@ -255,6 +411,9 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (args.length == 0) {
+            return openRestaurantMenu(sender);
+        }
         if (args.length == 1 && args[0].equalsIgnoreCase("health")) {
             return showHealth(sender);
         }
@@ -270,6 +429,12 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
         if (args.length == 2 && args[0].equalsIgnoreCase("setup-route")) {
             return openSupplyRoute(sender, args[1]);
         }
+        if (args.length == 1 && args[0].equalsIgnoreCase("market")) {
+            return openMarket(sender, null);
+        }
+        if (args.length == 2 && args[0].equalsIgnoreCase("market")) {
+            return openMarket(sender, args[1]);
+        }
         if (args.length == 2 && args[0].equalsIgnoreCase("order")) {
             return openSupplyOrder(sender, args[1]);
         }
@@ -277,6 +442,21 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                 && args[0].equalsIgnoreCase("dev")
                 && args[1].equalsIgnoreCase("assign")) {
             return assignPlot(sender, args[2], args[3]);
+        }
+        if (args.length == 3
+                && args[0].equalsIgnoreCase("dev")
+                && args[1].equalsIgnoreCase("mark-supplier")) {
+            return markSupplier(sender, args[2]);
+        }
+        if (args.length == 4
+                && args[0].equalsIgnoreCase("dev")
+                && args[1].equalsIgnoreCase("mark-package")) {
+            return markPackage(sender, args[2], args[3]);
+        }
+        if (args.length == 6
+                && args[0].equalsIgnoreCase("dev")
+                && args[1].equalsIgnoreCase("mark-warehouse")) {
+            return markWarehouse(sender, args[2], args[3], args[4], args[5]);
         }
         if (args.length == 9
                 && args[0].equalsIgnoreCase("dev")
@@ -301,7 +481,176 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                 && args[2].equalsIgnoreCase("cleanup")) {
             return cleanupProjectionFixture(sender, args[3]);
         }
+        if (args.length == 6
+                && args[0].equalsIgnoreCase("dev")
+                && args[1].equalsIgnoreCase("runtime-fixture")
+                && args[2].equalsIgnoreCase("seed")) {
+            return seedRuntimeFixture(sender, args[3], args[4], args[5]);
+        }
+        if (args.length == 4
+                && args[0].equalsIgnoreCase("dev")
+                && args[1].equalsIgnoreCase("runtime-fixture")
+                && args[2].equalsIgnoreCase("cleanup")) {
+            return cleanupRuntimeFixture(sender, args[3]);
+        }
         return false;
+    }
+
+    private boolean seedRuntimeFixture(CommandSender sender, String fixtureText, String restaurantText, String playerText) {
+        if (!fixtureAllowed(sender)) return true;
+        try {
+            UUID fixtureId = UUID.fromString(fixtureText);
+            UUID restaurantId = UUID.fromString(restaurantText);
+            UUID playerId = UUID.fromString(playerText);
+            SupplyRuntimeFixtureRepository fixtureRepository = supplyRuntimeFixtureRepository;
+            if (fixtureRepository == null) {
+                getLogger().warning("SUPPLY_RUNTIME_FIXTURE_SEED_FAILED fixture=" + fixtureId + " error=repository_unavailable");
+                return true;
+            }
+            CompletableFuture.supplyAsync(
+                    () -> {
+                        try {
+                            return fixtureRepository.seed(fixtureId, restaurantId, playerId);
+                        } catch (SQLException exception) {
+                            throw new CompletionException(exception);
+                        }
+                    }, database.executor())
+                    .whenComplete((fixture, error) -> runSync(() -> {
+                        if (error != null) {
+                            getLogger().warning("SUPPLY_RUNTIME_FIXTURE_SEED_FAILED fixture=" + fixtureId
+                                    + " error=" + rootMessage(error));
+                        } else {
+                            getLogger().info("SUPPLY_RUNTIME_FIXTURE_SEEDED fixture=" + fixture.fixtureId()
+                                    + " shipment=" + fixture.shipmentId()
+                                    + " package=" + fixture.packageId());
+                        }
+                    }));
+        } catch (IllegalArgumentException exception) {
+            sender.sendMessage("Runtime fixture IDs must be UUIDs.");
+        } catch (RuntimeException exception) {
+            getLogger().warning("SUPPLY_RUNTIME_FIXTURE_SEED_FAILED error=" + rootMessage(exception));
+        }
+        return true;
+    }
+
+    private boolean cleanupRuntimeFixture(CommandSender sender, String fixtureText) {
+        if (!fixtureAllowed(sender)) return true;
+        try {
+            UUID fixtureId = UUID.fromString(fixtureText);
+            SupplyRuntimeFixtureRepository fixtureRepository = supplyRuntimeFixtureRepository;
+            if (fixtureRepository == null) {
+                getLogger().warning("SUPPLY_RUNTIME_FIXTURE_CLEANUP_FAILED fixture=" + fixtureId + " error=repository_unavailable");
+                return true;
+            }
+            CompletableFuture.supplyAsync(
+                    () -> {
+                        try {
+                            return fixtureRepository.cleanup(fixtureId);
+                        } catch (SQLException exception) {
+                            throw new CompletionException(exception);
+                        }
+                    }, database.executor())
+                    .whenComplete((deleted, error) -> runSync(() -> {
+                        if (error != null) {
+                            getLogger().warning("SUPPLY_RUNTIME_FIXTURE_CLEANUP_FAILED fixture=" + fixtureId
+                                    + " error=" + rootMessage(error));
+                        } else {
+                            getLogger().info("SUPPLY_RUNTIME_FIXTURE_CLEANED fixture=" + fixtureId
+                                    + " deleted=" + deleted);
+                        }
+                    }));
+        } catch (IllegalArgumentException exception) {
+            sender.sendMessage("Runtime fixture ID must be UUID.");
+        } catch (RuntimeException exception) {
+            getLogger().warning("SUPPLY_RUNTIME_FIXTURE_CLEANUP_FAILED error=" + rootMessage(exception));
+        }
+        return true;
+    }
+
+    private boolean markSupplier(CommandSender sender, String rawEntityId) {
+        if (!sender.hasPermission("restauranttycoon.admin.dev")) {
+            sender.sendMessage("You do not have permission to use development commands.");
+            return true;
+        }
+        final java.util.UUID entityId;
+        try {
+            entityId = java.util.UUID.fromString(rawEntityId);
+        } catch (IllegalArgumentException exception) {
+            sender.sendMessage("Invalid entity UUID.");
+            return true;
+        }
+        org.bukkit.entity.Entity entity = getServer().getEntity(entityId);
+        if (!(entity instanceof org.bukkit.entity.Villager)) {
+            sender.sendMessage("Entity is not a loaded Villager.");
+            return true;
+        }
+        org.bukkit.NamespacedKey key = new org.bukkit.NamespacedKey(this, "supplier_villager");
+        entity.getPersistentDataContainer().set(key, org.bukkit.persistence.PersistentDataType.BYTE, (byte) 1);
+        sender.sendMessage("Marked supplier Villager: " + entityId);
+        return true;
+    }
+
+    private boolean markPackage(CommandSender sender, String rawEntityId, String rawPackageId) {
+        if (!sender.hasPermission("restauranttycoon.admin.dev")) {
+            sender.sendMessage("You do not have permission to use development commands.");
+            return true;
+        }
+        final java.util.UUID entityId;
+        final java.util.UUID packageId;
+        try {
+            entityId = java.util.UUID.fromString(rawEntityId);
+            packageId = java.util.UUID.fromString(rawPackageId);
+        } catch (IllegalArgumentException exception) {
+            sender.sendMessage("Invalid entity or package UUID.");
+            return true;
+        }
+        org.bukkit.entity.Entity entity = getServer().getEntity(entityId);
+        if (entity == null) {
+            sender.sendMessage("Entity is not loaded.");
+            return true;
+        }
+        entity.getPersistentDataContainer().set(
+                new org.bukkit.NamespacedKey(this, "supply_package_id"),
+                org.bukkit.persistence.PersistentDataType.STRING,
+                packageId.toString());
+        sender.sendMessage("Marked package entity: " + packageId);
+        return true;
+    }
+
+    private boolean markWarehouse(CommandSender sender, String worldName, String rawX, String rawY, String rawZ) {
+        if (!sender.hasPermission("restauranttycoon.admin.dev")) {
+            sender.sendMessage("You do not have permission to use development commands.");
+            return true;
+        }
+        try {
+            org.bukkit.World world = getServer().getWorld(worldName);
+            int x = Integer.parseInt(rawX), y = Integer.parseInt(rawY), z = Integer.parseInt(rawZ);
+            if (world == null) {
+                sender.sendMessage("World is not loaded.");
+                return true;
+            }
+            org.bukkit.block.Block block = world.getBlockAt(x, y, z);
+            if (!(block.getState() instanceof org.bukkit.block.TileState tile)) {
+                sender.sendMessage("Warehouse marker requires a tile block.");
+                return true;
+            }
+            tile.getPersistentDataContainer().set(
+                    new org.bukkit.NamespacedKey(this, "supply_warehouse"),
+                    org.bukkit.persistence.PersistentDataType.BYTE, (byte) 1);
+            tile.update(true, false);
+            sender.sendMessage("Marked warehouse block: " + worldName + " " + x + " " + y + " " + z);
+        } catch (IllegalArgumentException exception) {
+            sender.sendMessage("Invalid warehouse coordinates.");
+        }
+        return true;
+    }
+
+    private boolean openRestaurantMenu(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("Only players can open the restaurant GUI.");
+            return true;
+        }
+        return Objects.requireNonNull(restaurantMenuController).openFromCommand(player, database.state());
     }
 
     private boolean openSupplySetup(CommandSender sender, String target) {
@@ -318,6 +667,18 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
             return true;
         }
         return Objects.requireNonNull(supplyRouteMenuController).openFromCommand(player, plotId);
+    }
+
+    private boolean openMarket(CommandSender sender, String plotId) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("Chỉ người chơi mới có thể mở GUI chợ.");
+            return true;
+        }
+        if (plotId != null && settings.plots().stream().noneMatch(plot -> plot.plotId().equals(plotId))) {
+            sender.sendMessage("Không tìm thấy nhà hàng cấu hình: " + plotId);
+            return true;
+        }
+        return Objects.requireNonNull(marketMenuController).openFromCommand(player, plotId);
     }
 
     private boolean openSupplyOrder(CommandSender sender, String plotId) {
@@ -438,6 +799,10 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
     private boolean fixtureAllowed(CommandSender sender) {
         if (!(sender instanceof ConsoleCommandSender)) {
             sender.sendMessage("Projection fixtures are console-only.");
+            return false;
+        }
+        if (!sender.hasPermission("restauranttycoon.admin.dev")) {
+            sender.sendMessage("You do not have permission to use development fixtures.");
             return false;
         }
         if (!Boolean.getBoolean(FIXTURE_PROPERTY)) {

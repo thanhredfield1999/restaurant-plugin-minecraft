@@ -2,6 +2,7 @@ param(
     [int]$Port = 25566,
     [int]$TimeoutSeconds = 240,
     [switch]$Projection,
+    [switch]$RuntimeFixture,
     [switch]$UseExistingConfig,
     [switch]$CrashAfterCommit,
     [switch]$RecoverCrash
@@ -9,12 +10,24 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$javaHome = [Environment]::GetEnvironmentVariable("JAVA_HOME")
+if ([string]::IsNullOrWhiteSpace($javaHome)) {
+    $javaHome = "C:\Program Files\Java\jdk-21"
+}
+$javaExecutable = Join-Path $javaHome "bin\java.exe"
+if (!(Test-Path -LiteralPath $javaExecutable)) {
+    throw "Java 21 executable not found: $javaExecutable. Set JAVA_HOME to a Java 21 installation."
+}
+$env:JAVA_HOME = $javaHome
+$env:Path = (Join-Path $javaHome "bin") + ";" + $env:Path
+
 . (Join-Path $PSScriptRoot "paper-smoke-guard.ps1")
 
-$paperUrl = "https://fill-data.papermc.io/v1/objects/cabed3ae77cf55deba7c7d8722bc9cfd5e991201c211665f9265616d9fe5c77b/paper-1.20.4-499.jar"
-$paperSha256 = "cabed3ae77cf55deba7c7d8722bc9cfd5e991201c211665f9265616d9fe5c77b"
-$paperSize = 42781488
+$paperUrl = "https://fill-data.papermc.io/v1/objects/5ffef465eeeb5f2a3c23a24419d97c51afd7dbb4923ff42df9a3f58bba1ccfba/paper-1.21.11-132.jar"
+$paperSha256 = "5ffef465eeeb5f2a3c23a24419d97c51afd7dbb4923ff42df9a3f58bba1ccfba"
+$paperSize = 0
 $userAgent = "restaurant-tycoon-smoke/0.1.0 (local development harness)"
+$smokeWorldName = "rt-flat-test"
 
 function Require-EnvironmentVariable([string]$Name) {
     $value = [Environment]::GetEnvironmentVariable($Name)
@@ -36,7 +49,7 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $runDirectory = Join-Path $projectRoot "run\paper-smoke"
 $pluginsDirectory = Join-Path $runDirectory "plugins"
 $pluginDirectory = Join-Path $pluginsDirectory "RestaurantTycoon"
-$paperJar = Join-Path $runDirectory "paper-1.20.4-499.jar"
+$paperJar = Join-Path $runDirectory "paper-1.21.11-132.jar"
 $pluginJar = Join-Path $projectRoot "build\libs\restaurant-tycoon-0.1.0-SNAPSHOT.jar"
 $stdoutLog = Join-Path $runDirectory "smoke-stdout.log"
 $stderrLog = Join-Path $runDirectory "smoke-stderr.log"
@@ -62,13 +75,19 @@ if (!(Test-Path -LiteralPath $paperJar)) {
 }
 $paperFile = Get-Item -LiteralPath $paperJar
 $actualHash = (Get-FileHash -LiteralPath $paperJar -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($paperFile.Length -ne $paperSize -or $actualHash -ne $paperSha256) {
+if (($paperSize -gt 0 -and $paperFile.Length -ne $paperSize) -or $actualHash -ne $paperSha256) {
     throw "Paper artifact checksum or size mismatch. Delete $paperJar before retrying."
 }
 
-& (Join-Path $projectRoot "gradlew.bat") build --no-daemon
-if ($LASTEXITCODE -ne 0) {
-    throw "Plugin build failed."
+Push-Location $projectRoot
+try {
+    & (Join-Path $projectRoot "gradlew.bat") build --no-daemon --console=plain
+    $gradleExitCode = $LASTEXITCODE
+} finally {
+    Pop-Location
+}
+if ($gradleExitCode -ne 0) {
+    throw "Plugin build failed with exit code $gradleExitCode."
 }
 Copy-Item -LiteralPath $pluginJar -Destination (Join-Path $pluginsDirectory "RestaurantTycoon.jar") -Force
 
@@ -90,6 +109,7 @@ Set-Content -LiteralPath (Join-Path $runDirectory "server.properties") -Encoding
     "view-distance=4"
     "simulation-distance=4"
     "motd=RestaurantTycoon local smoke test"
+    "level-name=$smokeWorldName"
 )
 
 if ($UseExistingConfig) {
@@ -157,7 +177,8 @@ Remove-Item -LiteralPath (Join-Path $runDirectory "logs\latest.log") `
     -Force -ErrorAction SilentlyContinue
 $startInfo = New-Object System.Diagnostics.ProcessStartInfo
 $startInfo.FileName = "java"
-$fixtureEnabled = $Projection -or $CrashAfterCommit -or $RecoverCrash
+$fixtureEnabled = $Projection -or $RuntimeFixture -or $CrashAfterCommit -or $RecoverCrash
+$projectionFixtureEnabled = $Projection -or $CrashAfterCommit -or $RecoverCrash
 $fixtureProperty = if ($fixtureEnabled) { "-Drestauranttycoon.testFixtures=true " } else { "" }
 if ($CrashAfterCommit) {
     $fixtureProperty += "-Drestauranttycoon.testCrashAfterCommit=true "
@@ -198,7 +219,60 @@ try {
             }
         }
     }
-    if ($success -and $fixtureEnabled) {
+    if ($success -and $RuntimeFixture) {
+        $fixtureDeadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+        $fixtureId = [Guid]::NewGuid().ToString()
+        $restaurantId = [Guid]::NewGuid().ToString()
+        $playerId = [Guid]::NewGuid().ToString()
+        $runtimeLogOffset = 0
+        if (Test-Path -LiteralPath $latestLog) {
+            $runtimeLogOffset = (Get-Content -LiteralPath $latestLog -Raw).Length
+        }
+        $process.StandardInput.WriteLine("restaurant dev runtime-fixture seed $fixtureId $restaurantId $playerId")
+        $process.StandardInput.Flush()
+        $seeded = $false
+        $seededShipmentId = $null
+        $dispatched = $false
+        while ([DateTime]::UtcNow -lt $fixtureDeadline -and !$process.HasExited) {
+            Start-Sleep -Milliseconds 500
+            try {
+                $fullLog = Get-Content -LiteralPath $latestLog -Raw -ErrorAction Stop
+                $log = if ($fullLog.Length -gt $runtimeLogOffset) { $fullLog.Substring($runtimeLogOffset) } else { "" }
+                $seedMatch = [regex]::Match(
+                    [string]$log,
+                    "SUPPLY_RUNTIME_FIXTURE_SEEDED fixture=$fixtureId shipment=([0-9a-f-]+)")
+                if ($seedMatch.Success) {
+                    $seeded = $true
+                    $seededShipmentId = $seedMatch.Groups[1].Value
+                }
+                $dispatched = $seeded -and [string]$log -like "*SUPPLY_RUNTIME_PROJECTION_DISPATCHED shipment=$seededShipmentId stage=DELIVERY_ENTRY index=0 movement=disabled*"
+                if ($seeded -and $dispatched) { break }
+                if ([string]$log -like "*SUPPLY_RUNTIME_FIXTURE_SEED_FAILED fixture=$fixtureId*") {
+                    throw "Runtime fixture seed failed."
+                }
+            } catch [System.IO.IOException] {
+            }
+        }
+        if (!$seeded) { throw "Runtime fixture did not seed before timeout." }
+        if (!$dispatched) { throw "Runtime projection callback was not observed before timeout." }
+        $process.StandardInput.WriteLine("restaurant dev runtime-fixture cleanup $fixtureId")
+        $process.StandardInput.Flush()
+        $cleaned = $false
+        while ([DateTime]::UtcNow -lt $fixtureDeadline -and !$process.HasExited) {
+            Start-Sleep -Milliseconds 500
+            try {
+                $log = Get-Content -LiteralPath $latestLog -Raw -ErrorAction Stop
+                $cleaned = [string]$log -like "*SUPPLY_RUNTIME_FIXTURE_CLEANED fixture=$fixtureId*deleted=True*"
+                if ($cleaned) { break }
+                if ([string]$log -like "*SUPPLY_RUNTIME_FIXTURE_CLEANUP_FAILED fixture=$fixtureId*") {
+                    throw "Runtime fixture cleanup failed."
+                }
+            } catch [System.IO.IOException] {
+            }
+        }
+        if (!$cleaned) { throw "Runtime fixture cleanup did not finish before timeout." }
+    }
+    if ($success -and $projectionFixtureEnabled) {
         $fixtureDeadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
         $stateFile = Join-Path $runDirectory "restauranttycoon-fixture-state.json"
         if ($RecoverCrash) {
@@ -333,16 +407,23 @@ try {
         }
     }
 } finally {
-    if (!$process.HasExited) {
-        $process.StandardInput.WriteLine("stop")
-        $process.StandardInput.Flush()
-        if (!$process.WaitForExit(30000)) {
-            $process.Kill()
-            $process.WaitForExit()
+    try {
+        if (!$process.HasExited) {
+            try {
+                $process.StandardInput.WriteLine("stop")
+                $process.StandardInput.Flush()
+            } catch {
+                # Process may exit between HasExited and stdin write.
+            }
+            if (!$process.WaitForExit(30000)) {
+                try { $process.Kill() } catch { }
+                try { $process.WaitForExit() } catch { }
+            }
         }
+    } finally {
+        Set-Content -LiteralPath $stdoutLog -Encoding UTF8 -Value $stdoutTask.GetAwaiter().GetResult()
+        Set-Content -LiteralPath $stderrLog -Encoding UTF8 -Value $stderrTask.GetAwaiter().GetResult()
     }
-    Set-Content -LiteralPath $stdoutLog -Encoding UTF8 -Value $stdoutTask.GetAwaiter().GetResult()
-    Set-Content -LiteralPath $stderrLog -Encoding UTF8 -Value $stderrTask.GetAwaiter().GetResult()
 }
 
 if (!$success) {
@@ -355,7 +436,7 @@ if (!$CrashAfterCommit -and $process.ExitCode -ne 0) {
     throw "Paper exited with code $($process.ExitCode)."
 }
 
-Write-Output "Paper 1.20.4 build 499 smoke test passed and stopped cleanly."
+Write-Output "Paper 1.21.11 build 132 smoke test passed and stopped cleanly."
 if ($Projection) {
     Write-Output "Playerless purchase-to-world projection, replay, and cleanup passed."
 }

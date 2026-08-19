@@ -19,6 +19,7 @@ import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 import vn.restauranttycoon.config.PlotSettings;
+import vn.restauranttycoon.lore.RestaurantLore;
 import vn.restauranttycoon.persistence.DatabaseManager;
 import vn.restauranttycoon.plot.PlotAssignment;
 import vn.restauranttycoon.plot.PlotAssignmentService;
@@ -125,10 +126,9 @@ public final class OnboardingListener implements Listener, AutoCloseable {
             return;
         }
         player.setCompassTarget(target);
-        player.sendMessage("Mảnh đất của bạn: " + assignment.plotId() + ".");
-        player.sendMessage("Đi theo la bàn tới " + target.getBlockX() + ", "
-                + target.getBlockY() + ", " + target.getBlockZ()
-                + " rồi bước vào khu đất để dựng nhà hàng.");
+        RestaurantLore.plotGuide(
+                assignment.plotId(), target.getBlockX(), target.getBlockY(), target.getBlockZ())
+                .forEach(player::sendMessage);
     }
 
     private void requestInitialStage(Player player, PlotAssignment assignment) {

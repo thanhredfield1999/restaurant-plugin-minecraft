@@ -42,8 +42,9 @@ class SupplyHandoffRepositoryTest {
         UUID operation = UUID.randomUUID();
         repository.handoff(shipment, operation);
         repository.handoff(shipment, operation);
-        repository.stock(pack, restaurant, UUID.randomUUID());
-        repository.stock(pack, restaurant, UUID.randomUUID());
+        UUID stockOperation = UUID.randomUUID();
+        repository.stock(pack, restaurant, stockOperation);
+        repository.stock(pack, restaurant, stockOperation);
         assertEquals(4, repository.quantity(restaurant, "tomato"));
     }
 
@@ -59,6 +60,64 @@ class SupplyHandoffRepositoryTest {
                 () -> repository.stock(fulfillment.packageId(), otherRestaurant, UUID.randomUUID()));
         assertEquals(0, repository.quantity(otherRestaurant, "tomato"));
         assertEquals(0, repository.quantity(restaurant, "tomato"));
+    }
+
+    @Test
+    void authorizedHandoffRejectsForeignRestaurantBeforeStateMutation() throws Exception {
+        SupplyFulfillmentRecord fulfillment = repository.createForPaidOrder(order, restaurant);
+        repository.dispatch(fulfillment.shipmentId());
+        repository.arrive(fulfillment.shipmentId());
+        UUID foreign = UUID.randomUUID();
+
+        assertThrows(IllegalStateException.class, () ->
+                repository.handoffAuthorized(
+                        fulfillment.shipmentId(), foreign, foreign, UUID.randomUUID()));
+
+        assertEquals(0, repository.quantity(restaurant, "tomato"));
+        repository.handoff(fulfillment.shipmentId(), UUID.randomUUID());
+    }
+
+    @Test
+    void packageAuthorizedHandoffResolvesShipmentAndIsIdempotent() throws Exception {
+        SupplyFulfillmentRecord fulfillment = repository.createForPaidOrder(order, restaurant);
+        repository.dispatch(fulfillment.shipmentId());
+        repository.arrive(fulfillment.shipmentId());
+        UUID operation = UUID.randomUUID();
+
+        repository.handoffPackageAuthorized(fulfillment.packageId(), restaurant, restaurant, operation);
+        repository.handoffPackageAuthorized(fulfillment.packageId(), restaurant, restaurant, operation);
+        repository.stock(fulfillment.packageId(), restaurant, UUID.randomUUID());
+
+        assertEquals(4, repository.quantity(restaurant, "tomato"));
+    }
+
+    @Test
+    void authorizedHandoffSeparatesRestaurantScopeFromReceivingActor() throws Exception {
+        SupplyFulfillmentRecord fulfillment = repository.createForPaidOrder(order, restaurant);
+        repository.dispatch(fulfillment.shipmentId());
+        repository.arrive(fulfillment.shipmentId());
+        UUID receivingWorker = UUID.randomUUID();
+
+        repository.handoffPackageAuthorized(
+                fulfillment.packageId(), restaurant, receivingWorker, UUID.randomUUID());
+        repository.stock(fulfillment.packageId(), restaurant, UUID.randomUUID());
+
+        assertEquals(4, repository.quantity(restaurant, "tomato"));
+    }
+
+    @Test
+    void sameOperationIdWithDifferentReceivingActorIsRejected() throws Exception {
+        SupplyFulfillmentRecord fulfillment = repository.createForPaidOrder(order, restaurant);
+        repository.dispatch(fulfillment.shipmentId());
+        repository.arrive(fulfillment.shipmentId());
+        UUID operation = UUID.randomUUID();
+        UUID firstActor = UUID.randomUUID();
+        UUID secondActor = UUID.randomUUID();
+
+        repository.handoffPackageAuthorized(fulfillment.packageId(), restaurant, firstActor, operation);
+
+        assertThrows(IllegalStateException.class, () ->
+                repository.handoffPackageAuthorized(fulfillment.packageId(), restaurant, secondActor, operation));
     }
 
     private static void insert(Connection c, String sql, Object... values) throws Exception {

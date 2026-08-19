@@ -23,10 +23,17 @@ version = "0.1.0-SNAPSHOT"
 repositories {
     mavenCentral()
     maven("https://repo.papermc.io/repository/maven-public/")
+    maven("https://jitpack.io")
 }
 
 dependencies {
-    compileOnly("io.papermc.paper:paper-api:1.20.4-R0.1-SNAPSHOT")
+    compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
+    compileOnly("com.github.DecentSoftware-eu:DecentHolograms:2.9.9") {
+        exclude(group = "org.bukkit", module = "bukkit")
+    }
+    compileOnly("com.github.MilkBowl:VaultAPI:1.7") {
+        exclude(group = "org.bukkit", module = "bukkit")
+    }
 
     implementation("com.zaxxer:HikariCP:5.1.0")
     implementation("org.flywaydb:flyway-core:10.20.1")
@@ -36,18 +43,18 @@ dependencies {
     testImplementation(platform("org.junit:junit-bom:5.11.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testImplementation("com.h2database:h2:2.2.224")
-    testCompileOnly("io.papermc.paper:paper-api:1.20.4-R0.1-SNAPSHOT")
-    testRuntimeOnly("io.papermc.paper:paper-api:1.20.4-R0.1-SNAPSHOT")
+    testCompileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
+    testRuntimeOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_17
-    targetCompatibility = JavaVersion.VERSION_17
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
 }
 
 tasks.withType<JavaCompile>().configureEach {
-    options.release = 17
+    options.release = 21
 }
 
 tasks.test {

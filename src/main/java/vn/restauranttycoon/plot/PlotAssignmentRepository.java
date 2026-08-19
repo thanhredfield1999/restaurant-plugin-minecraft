@@ -148,6 +148,13 @@ public final class PlotAssignmentRepository {
         }
     }
 
+    public Optional<PlotAssignment> findByAccount(UUID accountId) throws SQLException {
+        Objects.requireNonNull(accountId, "accountId");
+        try (Connection connection = dataSource.getConnection()) {
+            return findByAccount(connection, accountId);
+        }
+    }
+
     public PlotAssignment release(String plotId, UUID accountId, long expectedFenceToken)
             throws SQLException {
         validateIdentifier(plotId, "plotId");

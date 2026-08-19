@@ -21,9 +21,7 @@ final class SupplySetupPointPresenterTest {
         assertEquals("Điểm dừng giao hàng", view.title());
         assertEquals(SupplySetupPointStatus.UNSET, view.status());
         assertTrue(view.lore().contains("Trạng thái: Chưa cấu hình"));
-        assertTrue(view.lore().contains("Chuột trái: Đặt tại vị trí hiện tại"));
-        assertTrue(view.lore().contains("Chuột phải: Dịch chuyển tới điểm"));
-        assertTrue(view.lore().contains("Shift + chuột phải: Xóa điểm"));
+        assertTrue(view.lore().contains("Nhấp để mở các thao tác"));
     }
 
     @Test
@@ -39,7 +37,7 @@ final class SupplySetupPointPresenterTest {
         assertEquals(SupplySetupPointStatus.CONFIGURED, view.status());
         assertTrue(view.lore().contains("Trạng thái: Đã cấu hình"));
         assertTrue(view.lore().contains("Vị trí: world (12.25, 64.00, -8.50)"));
-        assertTrue(view.lore().contains("Cảnh báo: Chuột trái sẽ ghi đè điểm hiện tại"));
+        assertTrue(view.lore().contains("Đã có điểm: có thể đặt lại, kiểm tra hoặc tháo"));
     }
 
     private static final class FakeMessages implements SupplySetupMessages {
@@ -58,10 +56,8 @@ final class SupplySetupPointPresenterTest {
                 case "status.CONFIGURED" -> "Đã cấu hình";
                 case "lore.status" -> "Trạng thái: {status}";
                 case "lore.location" -> "Vị trí: {world} ({x}, {y}, {z})";
-                case "lore.set" -> "Chuột trái: Đặt tại vị trí hiện tại";
-                case "lore.teleport" -> "Chuột phải: Dịch chuyển tới điểm";
-                case "lore.delete" -> "Shift + chuột phải: Xóa điểm";
-                case "lore.overwrite-warning" -> "Cảnh báo: Chuột trái sẽ ghi đè điểm hiện tại";
+                case "lore.open-actions" -> "Nhấp để mở các thao tác";
+                case "lore.configured-hint" -> "Đã có điểm: có thể đặt lại, kiểm tra hoặc tháo";
                 default -> throw new IllegalArgumentException("Thiếu key: " + key);
             };
             for (var entry : placeholders.entrySet()) {

@@ -113,6 +113,16 @@ class PlotAssignmentRepositoryTest {
     }
 
     @Test
+    void findByAccountReturnsOwnedPlotAndEmptyAfterRelease() throws SQLException {
+        UUID owner = UUID.randomUUID();
+        PlotAssignment assigned = assignments.assign("plot_1", owner, "server_1");
+
+        assertEquals("plot_1", assignments.findByAccount(owner).orElseThrow().plotId());
+        assignments.release("plot_1", owner, assigned.fenceToken());
+        assertTrue(assignments.findByAccount(owner).isEmpty());
+    }
+
+    @Test
     void concurrentAllocationsNeverShareAPlot() throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {

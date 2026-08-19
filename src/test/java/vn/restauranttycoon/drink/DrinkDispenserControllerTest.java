@@ -125,4 +125,16 @@ class DrinkDispenserControllerTest {
                 DrinkDispenserOutcome.RESET,
                 controller.interact(STATION, PLAYER, true, true, 200).outcome());
     }
+
+    @Test
+    void exposesBoundedFillProgressForStationHolograms() {
+        DrinkDispenserController controller = new DrinkDispenserController(100);
+
+        assertEquals(DrinkStationProgress.idle(), controller.progress(STATION, 100));
+        controller.interact(STATION, PLAYER, false, true, 100);
+
+        assertEquals(new DrinkStationProgress(true, 0), controller.progress(STATION, 100));
+        assertEquals(new DrinkStationProgress(true, 59), controller.progress(STATION, 159));
+        assertEquals(new DrinkStationProgress(true, 100), controller.progress(STATION, 250));
+    }
 }

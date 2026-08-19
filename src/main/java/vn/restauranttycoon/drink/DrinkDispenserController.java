@@ -71,6 +71,16 @@ public final class DrinkDispenserController {
         return activeFills.containsKey(stationId);
     }
 
+    public DrinkStationProgress progress(String stationId, long now) {
+        ActiveFill activeFill = activeFills.get(stationId);
+        if (activeFill == null) {
+            return DrinkStationProgress.idle();
+        }
+        long elapsed = Math.max(0L, now - activeFill.startedAt());
+        int percent = (int) Math.min(100L, elapsed * 100L / fillDuration);
+        return new DrinkStationProgress(true, percent);
+    }
+
     public void clear(String stationId) {
         activeFills.remove(stationId);
     }

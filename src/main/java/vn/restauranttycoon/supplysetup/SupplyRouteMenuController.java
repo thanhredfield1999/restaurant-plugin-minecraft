@@ -18,6 +18,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
@@ -168,6 +169,14 @@ public final class SupplyRouteMenuController implements Listener {
             save(player, holder.owner, sequence);
         } else if (event.isRightClick()) {
             teleport(player, holder.owner, sequence);
+        }
+    }
+
+    @EventHandler
+    public void onDrag(InventoryDragEvent event) {
+        InventoryHolder holder = event.getView().getTopInventory().getHolder();
+        if (holder instanceof RouteHolder || holder instanceof ConfirmHolder) {
+            event.setCancelled(true);
         }
     }
 

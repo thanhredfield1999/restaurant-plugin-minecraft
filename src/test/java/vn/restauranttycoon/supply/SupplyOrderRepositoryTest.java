@@ -2,6 +2,7 @@ package vn.restauranttycoon.supply;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -9,6 +10,8 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
@@ -180,6 +183,87 @@ class SupplyOrderRepositoryTest {
 
         assertEquals(new CurrencyAmount(500), economy.balance(playerId));
         assertEquals(0, count("supply_orders"));
+    }
+
+    @Test
+    void marketCaptureUsesDatabasePriceAndPersistsImmutableSnapshot() throws Exception {
+        Instant now = Instant.parse("2026-08-19T00:00:00Z");
+        new vn.restauranttycoon.market.MarketRepository(dataSource).ensureOpenCycle(
+                java.util.Map.of("tomato", 40L, "rice", 2L), now, Duration.ofMinutes(10));
+        OperationKey capture = OperationKey.create();
+        SupplierOrder order = order(UUID.randomUUID());
+        SupplyOrderReceipt receipt = new SupplyOrderRepository(dataSource).captureMarket(
+                UUID.randomUUID(), order, capture, catalog(), now.plusSeconds(1));
+
+        assertFalse(receipt.duplicate());
+        assertEquals(new CurrencyAmount(320), receipt.balance());
+        try (Connection connection = dataSource.getConnection();
+             var statement = connection.prepareStatement(
+                     "SELECT unit_price, market_cycle_id, price_snapshot FROM supply_order_lines WHERE sku = 'tomato'")) {
+            try (ResultSet result = statement.executeQuery()) {
+                assertTrue(result.next());
+                assertEquals(40L, result.getLong(1));
+                assertEquals(40L, result.getLong(3));
+                assertNotNull(result.getObject(2));
+            }
+        }
+        assertEquals(2L, new vn.restauranttycoon.market.MarketRepository(dataSource)
+                .findPrice("tomato", now.plusSeconds(1)).quantityDemanded());
+    }
+
+    @Test
+    void marketRetryUsesImmutableSnapshotAfterCycleExpires() throws Exception {
+        Instant now = Instant.parse("2026-08-19T00:00:00Z");
+        vn.restauranttycoon.market.MarketRepository market = new vn.restauranttycoon.market.MarketRepository(dataSource);
+        market.ensureOpenCycle(java.util.Map.of("tomato", 40L, "rice", 2L), now, Duration.ofMinutes(10));
+        OperationKey capture = OperationKey.create();
+        UUID orderId = UUID.randomUUID();
+        SupplyOrderRepository repository = new SupplyOrderRepository(dataSource);
+        repository.captureMarket(orderId, order(UUID.randomUUID()), capture, catalog(), now.plusSeconds(1));
+
+        market.ensureOpenCycle(java.util.Map.of("tomato", 80L, "rice", 4L), now.plusSeconds(601), Duration.ofMinutes(10));
+        SupplyOrderReceipt retry = repository.captureMarket(
+                UUID.randomUUID(), order(UUID.randomUUID()), capture, catalog(), now.plusSeconds(602));
+
+        assertTrue(retry.duplicate());
+        assertEquals(new CurrencyAmount(320), retry.balance());
+        assertEquals(80L, market.findPrice("tomato", now.plusSeconds(602)).unitPrice());
+    }
+
+    @Test
+    void marketAuthorizedCaptureRequiresOwnedReadyPlot() throws Exception {
+        String plotId = "plot_1";
+        new PlotAssignmentRepository(dataSource).assign(plotId, playerId, "paper-1");
+        completeSetup(plotId);
+        Instant now = Instant.parse("2026-08-19T00:00:00Z");
+        new vn.restauranttycoon.market.MarketRepository(dataSource).ensureOpenCycle(
+                java.util.Map.of("tomato", 40L, "rice", 2L), now, Duration.ofMinutes(10));
+        SupplierOrder submitted = order(UUID.randomUUID());
+
+        SupplyOrderReceipt receipt = new SupplyOrderRepository(dataSource).captureMarketAuthorized(
+                plotId, UUID.randomUUID(), submitted, OperationKey.create(), catalog(), now.plusSeconds(1));
+
+        assertFalse(receipt.duplicate());
+        assertEquals(new CurrencyAmount(320), receipt.balance());
+        assertEquals(1, count("supply_orders"));
+    }
+
+    @Test
+    void marketAuthorizedCaptureRejectsForeignPlotBeforePayment() throws Exception {
+        String plotId = "plot_foreign";
+        UUID foreignPlayer = UUID.randomUUID();
+        economy.apply(foreignPlayer, OperationKey.create(), 500, "TEST_GRANT");
+        new PlotAssignmentRepository(dataSource).assign(plotId, foreignPlayer, "paper-foreign");
+        SupplierOrder submitted = order(UUID.randomUUID());
+        OperationKey captureOperation = OperationKey.create();
+
+        assertThrows(SupplyOrderAuthorizationException.class, () ->
+                new SupplyOrderRepository(dataSource).captureMarketAuthorized(
+                        plotId, UUID.randomUUID(), submitted, captureOperation, catalog(),
+                        Instant.parse("2026-08-19T00:00:00Z")));
+
+        assertEquals(0, count("supply_orders"));
+        assertEquals(0, countLedger(captureOperation.value()));
     }
 
     private SupplierOrder order(UUID submitOperationId) {
