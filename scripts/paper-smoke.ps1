@@ -241,7 +241,18 @@ try {
         }
         $process.StandardInput.WriteLine("restaurant dev runtime-fixture cleanup-all")
         $process.StandardInput.Flush()
-        Start-Sleep -Milliseconds 500
+        $cleanupAllFinished = $false
+        while ([DateTime]::UtcNow -lt $fixtureDeadline -and !$process.HasExited -and !$cleanupAllFinished) {
+            Start-Sleep -Milliseconds 250
+            try {
+                $cleanupAllLog = Get-Content -LiteralPath $latestLog -Raw -ErrorAction Stop
+                $cleanupAllFinished = [string]$cleanupAllLog -like "*SUPPLY_RUNTIME_FIXTURE_CLEANUP_ALL count=*")
+                if ([string]$cleanupAllLog -like "*SUPPLY_RUNTIME_FIXTURE_CLEANUP_ALL_FAILED*") {
+                    throw "Runtime fixture cleanup-all failed."
+                }
+            } catch [System.IO.IOException] { }
+        }
+        if (!$cleanupAllFinished) { throw "Runtime fixture cleanup-all did not finish before timeout." }
         $process.StandardInput.WriteLine("restaurant dev runtime-fixture prepare")
         $process.StandardInput.Flush()
         $prepared = $false

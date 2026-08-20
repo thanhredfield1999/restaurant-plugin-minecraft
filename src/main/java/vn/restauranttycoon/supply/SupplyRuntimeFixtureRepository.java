@@ -75,7 +75,7 @@ public final class SupplyRuntimeFixtureRepository {
                         + "(SELECT 1 FROM supply_shipment_runtime runtime JOIN supply_shipments shipment "
                         + "ON shipment.shipment_id = runtime.shipment_id WHERE shipment.order_id = supply_orders.order_id "
                         + "AND runtime.journey_snapshot LIKE ?)") ) {
-            s.setString(1, "%\\\"owner\\\":\\\"fixture\\\"%");
+            s.setString(1, "%\"owner\":\"fixture\"%");
             try (ResultSet r = s.executeQuery()) {
                 while (r.next()) fixtureIds.add(r.getObject(1, UUID.class));
             }

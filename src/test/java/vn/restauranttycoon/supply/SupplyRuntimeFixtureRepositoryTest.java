@@ -68,6 +68,17 @@ class SupplyRuntimeFixtureRepositoryTest {
     }
 
     @Test
+    void cleanupAllFixturesRemovesOnlyFixtureOwnedOrders() throws Exception {
+        SupplyRuntimeFixture first = fixtureRepository.seed(fixtureId, restaurantId, playerId);
+        UUID secondFixtureId = UUID.randomUUID();
+        fixtureRepository.seed(secondFixtureId, UUID.randomUUID(), UUID.randomUUID());
+
+        assertEquals(2, fixtureRepository.cleanupAllFixtures());
+        assertEquals(0, count("supply_orders", "order_id", first.fixtureId()));
+        assertEquals(0, count("supply_orders", "order_id", secondFixtureId));
+    }
+
+    @Test
     void sameFixtureWithDifferentOwnerFailsClosed() throws Exception {
         fixtureRepository.seed(fixtureId, restaurantId, playerId);
 
