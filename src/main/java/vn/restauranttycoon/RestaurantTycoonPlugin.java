@@ -758,6 +758,12 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                 && args[2].equalsIgnoreCase("prepare")) {
             return prepareRuntimeFixture(sender);
         }
+        if (args.length == 3
+                && args[0].equalsIgnoreCase("dev")
+                && args[1].equalsIgnoreCase("runtime-fixture")
+                && args[2].equalsIgnoreCase("cleanup-all")) {
+            return cleanupAllRuntimeFixtures(sender);
+        }
         return false;
     }
 
@@ -772,6 +778,26 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
         world.getChunkAt(0, 0).load(false);
         getLogger().info("SUPPLY_RUNTIME_FIXTURE_PREPARED world=" + world.getName()
                 + " chunk=0,0 loaded=" + world.isChunkLoaded(0, 0));
+        return true;
+    }
+
+    private boolean cleanupAllRuntimeFixtures(CommandSender sender) {
+        if (!fixtureAllowed(sender)) return true;
+        SupplyRuntimeFixtureRepository repository = supplyRuntimeFixtureRepository;
+        if (repository == null) return true;
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return repository.cleanupAllFixtures();
+            } catch (SQLException exception) {
+                throw new CompletionException(exception);
+            }
+        }, database.executor()).whenComplete((count, error) -> runSync(() -> {
+            if (error != null) {
+                getLogger().warning("SUPPLY_RUNTIME_FIXTURE_CLEANUP_ALL_FAILED error=" + rootMessage(error));
+            } else {
+                getLogger().info("SUPPLY_RUNTIME_FIXTURE_CLEANUP_ALL count=" + count);
+            }
+        }));
         return true;
     }
 

@@ -68,8 +68,24 @@ public final class SupplyRuntimeFixtureRepository {
         }
     }
 
+    public int cleanupAllFixtures() throws SQLException {
+        java.util.List<UUID> fixtureIds = new java.util.ArrayList<>();
+        try (Connection c = dataSource.getConnection(); PreparedStatement s = c.prepareStatement(
+                "SELECT order_id FROM supply_orders WHERE operation_id = order_id AND EXISTS "
+                        + "(SELECT 1 FROM supply_shipment_runtime runtime JOIN supply_shipments shipment "
+                        + "ON shipment.shipment_id = runtime.shipment_id WHERE shipment.order_id = supply_orders.order_id "
+                        + "AND runtime.journey_snapshot LIKE ?)") ) {
+            s.setString(1, "%\\\"owner\\\":\\\"fixture\\\"%");
+            try (ResultSet r = s.executeQuery()) {
+                while (r.next()) fixtureIds.add(r.getObject(1, UUID.class));
+            }
+        }
+        for (UUID fixtureId : fixtureIds) cleanup(fixtureId);
+        return fixtureIds.size();
+    }
+
     public boolean cleanup(UUID fixtureId) throws SQLException {
-        try (Connection c = dataSource.getConnection()) {
+               try (Connection c = dataSource.getConnection()) {
             c.setAutoCommit(false);
             try {
                 int deleted;

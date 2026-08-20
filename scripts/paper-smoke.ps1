@@ -239,6 +239,9 @@ try {
         if (Test-Path -LiteralPath $latestLog) {
             $runtimeLogOffset = (Get-Content -LiteralPath $latestLog -Raw).Length
         }
+        $process.StandardInput.WriteLine("restaurant dev runtime-fixture cleanup-all")
+        $process.StandardInput.Flush()
+        Start-Sleep -Milliseconds 500
         $process.StandardInput.WriteLine("restaurant dev runtime-fixture prepare")
         $process.StandardInput.Flush()
         $prepared = $false

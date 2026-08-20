@@ -60,7 +60,8 @@ public final class SupplyVanillaVillagerAdapter {
             throw new IllegalStateException("Supplier spawn chunk is not loaded");
         }
         Villager villager = (Villager) location.getWorld().spawnEntity(location, EntityType.VILLAGER);
-        villager.setAI(false);
+        // AI cần bật để Paper thực thi entity movement; route/velocity vẫn do runtime kiểm soát.
+        villager.setAI(true);
         villager.setInvulnerable(true);
         villager.setCollidable(false);
         villager.setRemoveWhenFarAway(false);
