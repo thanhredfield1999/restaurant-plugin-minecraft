@@ -48,7 +48,7 @@ Wire settings vào bounded runtime session loop; chỉ hoạt động khi `suppl
 ## Status
 
 `R4 config foundation = PASS`.
-`R4 runtime movement = NOT VERIFIED`.
+`R4 runtime movement = CODE-WIRED, NOT PAPER-VERIFIED`.
 
 Ngày: 2026-08-20
 

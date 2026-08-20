@@ -28,7 +28,7 @@ Tên gate lịch sử bên dưới giữ nguyên để không mất trace. Mappi
 - R1: PostgreSQL durability — PASS qua CI.
 - R2: entity projection-only — PASS, real entity chưa enable.
 - R3: checkpoint CAS vertical slice — PASS, Paper end-to-end UNKNOWN.
-- R4: movement foundation/config/session contract — PARTIAL; runtime tick/movement chưa verified.
+- R4: movement foundation/config/session contract — CODE-WIRED; Paper movement chưa verified.
 - R5: receiving persistence slice — PASS; Paper interaction UNKNOWN.
 - R6: full gameplay journey — NOT VERIFIED.
 - R7: release gate — REJECTED.
