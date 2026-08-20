@@ -239,6 +239,17 @@ try {
         if (Test-Path -LiteralPath $latestLog) {
             $runtimeLogOffset = (Get-Content -LiteralPath $latestLog -Raw).Length
         }
+        $process.StandardInput.WriteLine("restaurant dev runtime-fixture prepare")
+        $process.StandardInput.Flush()
+        $prepared = $false
+        while ([DateTime]::UtcNow -lt $fixtureDeadline -and !$process.HasExited -and !$prepared) {
+            Start-Sleep -Milliseconds 250
+            try {
+                $prepareLog = Get-Content -LiteralPath $latestLog -Raw -ErrorAction Stop
+                $prepared = [string]$prepareLog -like "*SUPPLY_RUNTIME_FIXTURE_PREPARED world=rt-flat-test chunk=0,0 loaded=True*"
+            } catch [System.IO.IOException] { }
+        }
+        if (!$prepared) { throw "Runtime fixture world preparation did not finish before timeout." }
         $process.StandardInput.WriteLine("restaurant dev runtime-fixture seed $fixtureId $restaurantId $playerId")
         $process.StandardInput.Flush()
         $seeded = $false

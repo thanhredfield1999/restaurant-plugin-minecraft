@@ -722,7 +722,27 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                 && args[2].equalsIgnoreCase("cleanup")) {
             return cleanupRuntimeFixture(sender, args[3]);
         }
+        if (args.length == 3
+                && args[0].equalsIgnoreCase("dev")
+                && args[1].equalsIgnoreCase("runtime-fixture")
+                && args[2].equalsIgnoreCase("prepare")) {
+            return prepareRuntimeFixture(sender);
+        }
         return false;
+    }
+
+    private boolean prepareRuntimeFixture(CommandSender sender) {
+        if (!fixtureAllowed(sender)) return true;
+        World world = Bukkit.getWorld("rt-flat-test");
+        if (world == null) {
+            getLogger().warning("SUPPLY_RUNTIME_FIXTURE_PREPARE_FAILED error=world_unavailable");
+            return true;
+        }
+        world.setSpawnLocation(0, 65, 0);
+        world.getChunkAt(0, 0).load(false);
+        getLogger().info("SUPPLY_RUNTIME_FIXTURE_PREPARED world=" + world.getName()
+                + " chunk=0,0 loaded=" + world.isChunkLoaded(0, 0));
+        return true;
     }
 
     private boolean seedRuntimeFixture(CommandSender sender, String fixtureText, String restaurantText, String playerText) {
