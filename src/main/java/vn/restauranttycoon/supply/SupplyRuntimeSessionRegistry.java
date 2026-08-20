@@ -25,6 +25,13 @@ public final class SupplyRuntimeSessionRegistry {
         return true;
     }
 
+    public boolean replaceClaim(UUID shipmentId, SupplyRuntimeClaim claim) {
+        SupplyRuntimeSession existing = sessions.get(Objects.requireNonNull(shipmentId, "shipmentId"));
+        if (existing == null) return false;
+        sessions.put(shipmentId, new SupplyRuntimeSession(claim, existing.projection(), existing.entityId()));
+        return true;
+    }
+
     public Optional<SupplyRuntimeSession> get(UUID shipmentId) {
         return Optional.ofNullable(sessions.get(Objects.requireNonNull(shipmentId, "shipmentId")));
     }

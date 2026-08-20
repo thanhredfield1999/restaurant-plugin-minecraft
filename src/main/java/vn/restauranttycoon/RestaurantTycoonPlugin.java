@@ -16,10 +16,14 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.bukkit.World;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.ConsoleCommandSender;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Villager;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
 import vn.restauranttycoon.build.BukkitWorldProjectionApplier;
@@ -51,6 +55,11 @@ import vn.restauranttycoon.supply.SupplyRuntimeEntityProjectionPlan;
 import vn.restauranttycoon.supply.SupplyRuntimeEntityProjectionPlanner;
 import vn.restauranttycoon.supply.SupplyRuntimeCoordinator;
 import vn.restauranttycoon.supply.SupplyRuntimeWork;
+import vn.restauranttycoon.supply.SupplyRuntimeClaim;
+import vn.restauranttycoon.supply.SupplyRuntimeProjection;
+import vn.restauranttycoon.supply.SupplyRuntimeCheckpointResolver;
+import vn.restauranttycoon.supply.SupplyVillagerStuckWatchdog;
+import vn.restauranttycoon.supplysetup.SupplySetupPosition;
 import vn.restauranttycoon.supply.BukkitIngredientCatalogLoader;
 import vn.restauranttycoon.supply.IngredientCatalog;
 import vn.restauranttycoon.supply.SupplyOrderMenuController;
@@ -64,6 +73,13 @@ import vn.restauranttycoon.supply.WarehouseInteractionListener;
 import vn.restauranttycoon.supply.SupplyVillagerRegistryListener;
 import vn.restauranttycoon.supply.SupplyVillagerRegistry;
 import vn.restauranttycoon.supply.SupplyVanillaVillagerAdapter;
+import vn.restauranttycoon.supply.SupplyRuntimeSession;
+import vn.restauranttycoon.supply.SupplyRuntimeSessionRegistry;
+import vn.restauranttycoon.supply.SupplyRuntimeMovementTargetResolver;
+import vn.restauranttycoon.supply.SupplyRuntimeTransitionCoordinator;
+import vn.restauranttycoon.supply.SupplyRuntimeRepositoryTransitionExecutor;
+import vn.restauranttycoon.supply.SupplyRuntimeTransitionApplier;
+import vn.restauranttycoon.supply.SupplyVillagerMovementOutcome;
 
 public final class RestaurantTycoonPlugin extends JavaPlugin {
     private static final String FIXTURE_PROPERTY = "restauranttycoon.testFixtures";
@@ -97,6 +113,11 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
     private WarehouseInteractionListener warehouseInteractionListener;
     private RestaurantMenuController restaurantMenuController;
     private BukkitTask supplyRuntimePollTask;
+    private BukkitTask supplyRuntimeTickTask;
+    private SupplyRuntimeSessionRegistry supplyRuntimeSessionRegistry;
+    private SupplyRuntimeTransitionCoordinator supplyRuntimeTransitionCoordinator;
+    private final Map<UUID, SupplyVillagerStuckWatchdog> supplyRuntimeWatchdogs = new java.util.HashMap<>();
+    private long supplyRuntimeTick;
     private BukkitTask drinkStationHologramTask;
     private BukkitTask worldOperationPollTask;
     private final AtomicBoolean worldOperationInFlight = new AtomicBoolean(false);
@@ -235,6 +256,16 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
             supplyRuntimePollTask.cancel();
             supplyRuntimePollTask = null;
         }
+        if (supplyRuntimeTickTask != null) {
+            supplyRuntimeTickTask.cancel();
+            supplyRuntimeTickTask = null;
+        }
+        if (supplyRuntimeTransitionCoordinator != null) {
+            supplyRuntimeTransitionCoordinator.close();
+            supplyRuntimeTransitionCoordinator = null;
+        }
+        supplyRuntimeSessionRegistry = null;
+        supplyRuntimeWatchdogs.clear();
         if (supplyRuntimeClaimWorker != null) {
             supplyRuntimeClaimWorker.close();
             supplyRuntimeClaimWorker = null;
@@ -359,6 +390,17 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
     private void startSupplyRuntimeCoordinator() {
         SupplyFulfillmentRepository repository = new SupplyFulfillmentRepository(database.requireDataSource());
         supplyRuntimeFixtureRepository = new SupplyRuntimeFixtureRepository(database.requireDataSource());
+        if (settings.supplyRuntime().enabled()) {
+            supplyRuntimeSessionRegistry = new SupplyRuntimeSessionRegistry(
+                    settings.supplyRuntime().maxSessions());
+            supplyRuntimeTransitionCoordinator = new SupplyRuntimeTransitionCoordinator(
+                    database.executor(),
+                    new SupplyRuntimeTransitionApplier(
+                            new SupplyRuntimeRepositoryTransitionExecutor(repository)));
+            supplyRuntimeTickTask = getServer().getScheduler().runTaskTimer(
+                    this, this::tickSupplyRuntimeSessions, 1L, 1L);
+            getLogger().warning("Controlled supply runtime movement ENABLED; use dev Paper only");
+        }
         SupplyRuntimeProjectionLoader projectionLoader = new SupplyRuntimeProjectionLoader(repository);
         SupplyRuntimeClaimProjectionDispatcher projectionDispatcher = new SupplyRuntimeClaimProjectionDispatcher(
                 claim -> projectionLoader.load(new SupplyRuntimeWork(
@@ -375,6 +417,10 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                             + " movement=disabled");
                     if (entityPlan.action() == SupplyRuntimeEntityProjectionPlan.Action.PENDING_MANUAL) {
                         getLogger().warning("Supply entity candidates are duplicated; movement remains disabled");
+                    }
+                    if (settings.supplyRuntime().enabled()
+                            && entityPlan.action() != SupplyRuntimeEntityProjectionPlan.Action.PENDING_MANUAL) {
+                        openControlledRuntimeSession(claim, projection, entityPlan);
                     }
                 });
         supplyRuntimeClaimProjectionDispatcher = projectionDispatcher;
@@ -406,6 +452,97 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                 20L,
                 20L);
         getLogger().info("Supply runtime claim worker started; Citizens adapter remains disabled until runtime contract is configured");
+    }
+
+    private void openControlledRuntimeSession(
+            SupplyRuntimeClaim claim,
+            SupplyRuntimeProjection projection,
+            SupplyRuntimeEntityProjectionPlan entityPlan) {
+        try {
+            Villager villager;
+            if (entityPlan.action() == SupplyRuntimeEntityProjectionPlan.Action.SPAWN) {
+                Location location = new Location(
+                        Bukkit.getWorld(SupplyRuntimeCheckpointResolver.resolve(
+                                projection.journey(), projection.checkpointStage(), projection.checkpointIndex()).worldName()),
+                        SupplyRuntimeCheckpointResolver.resolve(
+                                projection.journey(), projection.checkpointStage(), projection.checkpointIndex()).x(),
+                        SupplyRuntimeCheckpointResolver.resolve(
+                                projection.journey(), projection.checkpointStage(), projection.checkpointIndex()).y(),
+                        SupplyRuntimeCheckpointResolver.resolve(
+                                projection.journey(), projection.checkpointStage(), projection.checkpointIndex()).z());
+                if (location.getWorld() == null) throw new IllegalStateException("checkpoint world is unavailable");
+                villager = supplyVillagerAdapter.spawnSupplier(location, projection.shipmentId());
+            } else {
+                UUID entityId = supplyVillagerRegistry.candidates(projection.shipmentId()).get(0);
+                Entity entity = Bukkit.getEntity(entityId);
+                if (!(entity instanceof Villager candidate)) throw new IllegalStateException("supplier entity is unavailable");
+                villager = candidate;
+            }
+            if (!supplyRuntimeSessionRegistry.open(claim, projection, villager.getUniqueId())) {
+                throw new IllegalStateException("runtime session capacity or identity conflict");
+            }
+        } catch (RuntimeException exception) {
+            getLogger().warning("Controlled supply runtime session rejected: " + rootMessage(exception));
+        }
+    }
+
+    private void tickSupplyRuntimeSessions() {
+        if (!settings.supplyRuntime().enabled() || supplyRuntimeSessionRegistry == null) return;
+        supplyRuntimeTick++;
+        for (SupplyRuntimeSession session : supplyRuntimeSessionRegistry.snapshot()) {
+            Entity entity = Bukkit.getEntity(session.entityId());
+            if (!(entity instanceof Villager villager) || !villager.isValid()) {
+                supplyRuntimeSessionRegistry.remove(session.claim().shipmentId());
+                continue;
+            }
+            try {
+                SupplyRuntimeMovementTargetResolver.Target target = SupplyRuntimeMovementTargetResolver.resolve(
+                        session.projection(), true);
+                SupplySetupPosition position = target.position();
+                World world = Bukkit.getWorld(position.worldName());
+                if (world == null || !world.isChunkLoaded((int) position.x() >> 4, (int) position.z() >> 4)) continue;
+                SupplyVillagerStuckWatchdog watchdog = supplyRuntimeWatchdogs.computeIfAbsent(
+                        session.claim().shipmentId(), ignored -> new SupplyVillagerStuckWatchdog(100, 0.05));
+                SupplyVillagerMovementOutcome outcome = supplyVillagerAdapter.moveToward(
+                        villager,
+                        new Location(world, position.x(), position.y(), position.z()),
+                        settings.supplyRuntime().arrivalRadius(),
+                        settings.supplyRuntime().maxSpeed(),
+                        watchdog);
+                if (outcome == SupplyVillagerMovementOutcome.ARRIVED) {
+                    UUID operationId = UUID.nameUUIDFromBytes((session.claim().shipmentId() + ":"
+                            + session.projection().revision() + ":"
+                            + session.projection().checkpointStage() + ":"
+                            + session.projection().checkpointIndex()).getBytes(StandardCharsets.UTF_8));
+                    supplyRuntimeTransitionCoordinator.transition(
+                            session.claim(), session.projection(), operationId)
+                            .whenComplete((result, error) -> runSync(() -> {
+                                supplyRuntimeSessionRegistry.remove(session.claim().shipmentId());
+                                supplyRuntimeWatchdogs.remove(session.claim().shipmentId());
+                                if (error != null) getLogger().warning("Supply runtime transition failed: " + rootMessage(error));
+                            }));
+                } else if (outcome == SupplyVillagerMovementOutcome.STUCK) {
+                    getLogger().warning("Supply runtime supplier stuck; session moved to manual recovery");
+                    supplyRuntimeSessionRegistry.remove(session.claim().shipmentId());
+                    supplyRuntimeWatchdogs.remove(session.claim().shipmentId());
+                } else if (supplyRuntimeTick % settings.supplyRuntime().leaseRenewTicks() == 0) {
+                    CompletableFuture.supplyAsync(() -> {
+                        try {
+                            return new SupplyFulfillmentRepository(database.requireDataSource()).renew(
+                                    session.claim(), Duration.ofSeconds(settings.worldOperations().leaseSeconds()));
+                        } catch (SQLException exception) {
+                            throw new CompletionException(exception);
+                        }
+                    }, database.executor()).whenComplete((renewed, error) -> runSync(() -> {
+                        if (error != null) supplyRuntimeSessionRegistry.remove(session.claim().shipmentId());
+                        else supplyRuntimeSessionRegistry.replaceClaim(session.claim().shipmentId(), renewed);
+                    }));
+                }
+            } catch (RuntimeException exception) {
+                getLogger().warning("Controlled supply runtime tick rejected: " + rootMessage(exception));
+                supplyRuntimeSessionRegistry.remove(session.claim().shipmentId());
+            }
+        }
     }
 
     private void startOnboarding() {
