@@ -246,7 +246,7 @@ try {
             Start-Sleep -Milliseconds 250
             try {
                 $cleanupAllLog = Get-Content -LiteralPath $latestLog -Raw -ErrorAction Stop
-                $cleanupAllFinished = [string]$cleanupAllLog -like "*SUPPLY_RUNTIME_FIXTURE_CLEANUP_ALL count=*")
+                $cleanupAllFinished = [string]$cleanupAllLog -like "*SUPPLY_RUNTIME_FIXTURE_CLEANUP_ALL count=*"
                 if ([string]$cleanupAllLog -like "*SUPPLY_RUNTIME_FIXTURE_CLEANUP_ALL_FAILED*") {
                     throw "Runtime fixture cleanup-all failed."
                 }
