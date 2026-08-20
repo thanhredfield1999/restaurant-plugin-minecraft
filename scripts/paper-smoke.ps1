@@ -3,6 +3,7 @@ param(
     [int]$TimeoutSeconds = 240,
     [switch]$Projection,
     [switch]$RuntimeFixture,
+    [switch]$Movement,
     [switch]$UseExistingConfig,
     [switch]$CrashAfterCommit,
     [switch]$RecoverCrash
@@ -39,6 +40,10 @@ function Require-EnvironmentVariable([string]$Name) {
 
 function Quote-Yaml([string]$Value) {
     return "'" + $Value.Replace("'", "''") + "'"
+}
+
+if ($Movement -and $UseExistingConfig) {
+    throw "-Movement requires generated smoke config; omit -UseExistingConfig."
 }
 
 if (!$UseExistingConfig -and $env:RT_ACCEPT_MINECRAFT_EULA -ne "true") {
@@ -138,9 +143,15 @@ world-operations:
   poll-ticks: 10
   lease-seconds: 30
   blocks-per-tick: 100
+supply-runtime:
+  enabled: $($Movement.ToString().ToLowerInvariant())
+  max-sessions: 1
+  arrival-radius: 1.5
+  max-speed: 0.25
+  lease-renew-ticks: 20
 plots:
   plot_1:
-    world: world
+    world: $smokeWorldName
     origin:
       x: 0
       y: 64
@@ -245,8 +256,12 @@ try {
                     $seeded = $true
                     $seededShipmentId = $seedMatch.Groups[1].Value
                 }
-                $dispatched = $seeded -and [string]$log -like "*SUPPLY_RUNTIME_PROJECTION_DISPATCHED shipment=$seededShipmentId stage=DELIVERY_ENTRY index=0 movement=disabled*"
-                if ($seeded -and $dispatched) { break }
+                $movementState = if ($Movement) { "enabled" } else { "disabled" }
+                $dispatched = $seeded -and [regex]::IsMatch(
+                    [string]$log,
+                    "SUPPLY_RUNTIME_PROJECTION_DISPATCHED shipment=$seededShipmentId stage=DELIVERY_ENTRY index=0 .*movement=$movementState")
+                $movementObserved = !$Movement -or ([string]$log -like "*SUPPLY_RUNTIME_MOVING shipment=$seededShipmentId*")
+                if ($seeded -and $dispatched -and $movementObserved) { break }
                 if ([string]$log -like "*SUPPLY_RUNTIME_FIXTURE_SEED_FAILED fixture=$fixtureId*") {
                     throw "Runtime fixture seed failed."
                 }

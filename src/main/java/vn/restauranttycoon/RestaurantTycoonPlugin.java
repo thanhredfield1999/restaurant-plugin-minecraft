@@ -118,6 +118,7 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
     private SupplyRuntimeTransitionCoordinator supplyRuntimeTransitionCoordinator;
     private SupplyFulfillmentRepository supplyFulfillmentRepository;
     private final Map<UUID, SupplyVillagerStuckWatchdog> supplyRuntimeWatchdogs = new java.util.HashMap<>();
+    private final java.util.Set<UUID> supplyRuntimeFinalizing = new java.util.HashSet<>();
     private long supplyRuntimeTick;
     private BukkitTask drinkStationHologramTask;
     private BukkitTask worldOperationPollTask;
@@ -267,6 +268,7 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
         }
         supplyRuntimeSessionRegistry = null;
         supplyRuntimeWatchdogs.clear();
+        supplyRuntimeFinalizing.clear();
         supplyFulfillmentRepository = null;
         if (supplyRuntimeClaimWorker != null) {
             supplyRuntimeClaimWorker.close();
@@ -417,7 +419,7 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                             + projection.shipmentId() + " stage=" + projection.checkpointStage()
                             + " index=" + projection.checkpointIndex()
                             + " entityAction=" + entityPlan.action()
-                            + " movement=disabled");
+                            + " movement=" + (settings.supplyRuntime().enabled() ? "enabled" : "disabled"));
                     if (entityPlan.action() == SupplyRuntimeEntityProjectionPlan.Action.PENDING_MANUAL) {
                         getLogger().warning("Supply entity candidates are duplicated; movement remains disabled");
                     }
@@ -475,6 +477,8 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                                 projection.journey(), projection.checkpointStage(), projection.checkpointIndex()).z());
                 if (location.getWorld() == null) throw new IllegalStateException("checkpoint world is unavailable");
                 villager = supplyVillagerAdapter.spawnSupplier(location, projection.shipmentId());
+                getLogger().info("SUPPLY_RUNTIME_ENTITY_SPAWNED shipment=" + projection.shipmentId()
+                        + " entity=" + villager.getUniqueId());
             } else {
                 UUID entityId = supplyVillagerRegistry.candidates(projection.shipmentId()).get(0);
                 Entity entity = Bukkit.getEntity(entityId);
@@ -514,7 +518,16 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                         settings.supplyRuntime().arrivalRadius(),
                         settings.supplyRuntime().maxSpeed(),
                         watchdog);
+                getLogger().info("SUPPLY_RUNTIME_MOVING shipment=" + session.claim().shipmentId()
+                        + " outcome=" + outcome);
                 if (outcome == SupplyVillagerMovementOutcome.ARRIVED) {
+                    getLogger().info("SUPPLY_RUNTIME_ARRIVED shipment=" + session.claim().shipmentId()
+                            + " stage=" + session.projection().checkpointStage()
+                            + " index=" + session.projection().checkpointIndex());
+                    if ("DELIVERY_DESPAWN".equals(session.projection().checkpointStage())) {
+                        finalizeControlledRuntimeSession(session, villager);
+                        continue;
+                    }
                     UUID operationId = UUID.nameUUIDFromBytes((session.claim().shipmentId() + ":"
                             + session.projection().revision() + ":"
                             + session.projection().checkpointStage() + ":"
@@ -522,6 +535,8 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                     supplyRuntimeTransitionCoordinator.transition(
                             session.claim(), session.projection(), operationId)
                             .whenComplete((result, error) -> runSync(() -> {
+                                if (error == null) getLogger().info("SUPPLY_RUNTIME_CHECKPOINT_CAS shipment="
+                                        + session.claim().shipmentId() + " result=" + result);
                                 supplyRuntimeSessionRegistry.remove(session.claim().shipmentId());
                                 supplyRuntimeWatchdogs.remove(session.claim().shipmentId());
                                 if (error != null) getLogger().warning("Supply runtime transition failed: " + rootMessage(error));
@@ -551,6 +566,49 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                 markRuntimePendingManual(session.claim());
             }
         }
+    }
+
+    private void finalizeControlledRuntimeSession(SupplyRuntimeSession session, Villager villager) {
+        UUID shipmentId = session.claim().shipmentId();
+        if (!supplyRuntimeFinalizing.add(shipmentId)) return;
+        UUID operationId = UUID.nameUUIDFromBytes((shipmentId + ":finalize:" + session.projection().revision())
+                .getBytes(StandardCharsets.UTF_8));
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                return supplyFulfillmentRepository.finalizeDelivery(
+                        shipmentId, session.projection().revision(), operationId);
+            } catch (SQLException exception) {
+                throw new CompletionException(exception);
+            }
+        }, database.executor()).whenComplete((result, error) -> runSync(() -> {
+            if (error != null) {
+                supplyRuntimeFinalizing.remove(shipmentId);
+                getLogger().warning("Supply runtime finalization failed: " + rootMessage(error));
+                return;
+            }
+            if (!supplyVillagerAdapter.removeSupplier(villager, shipmentId)) {
+                supplyRuntimeFinalizing.remove(shipmentId);
+                getLogger().warning("Supply runtime cleanup entity mismatch; manual recovery required");
+                markRuntimePendingManual(session.claim());
+                return;
+            }
+            getLogger().info("SUPPLY_RUNTIME_ENTITY_CLEANED shipment=" + shipmentId
+                    + " operation=" + operationId);
+            CompletableFuture.runAsync(() -> {
+                try {
+                    supplyFulfillmentRepository.confirmEntityCleanup(shipmentId, operationId);
+                } catch (SQLException exception) {
+                    throw new CompletionException(exception);
+                }
+            }, database.executor()).whenComplete((ignored, cleanupError) -> runSync(() -> {
+                supplyRuntimeFinalizing.remove(shipmentId);
+                supplyRuntimeSessionRegistry.remove(shipmentId);
+                supplyRuntimeWatchdogs.remove(shipmentId);
+                if (cleanupError != null) {
+                    getLogger().warning("Supply runtime cleanup confirmation failed: " + rootMessage(cleanupError));
+                }
+            }));
+        }));
     }
 
     private void markRuntimePendingManual(SupplyRuntimeClaim claim) {

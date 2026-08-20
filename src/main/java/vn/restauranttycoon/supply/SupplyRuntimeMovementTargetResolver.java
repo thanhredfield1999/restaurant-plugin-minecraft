@@ -13,6 +13,10 @@ public final class SupplyRuntimeMovementTargetResolver {
             return new Target(TargetKind.SPAWN, SupplyRuntimeCheckpointResolver.resolve(
                     projection.journey(), projection.checkpointStage(), projection.checkpointIndex()));
         }
+        if ("DELIVERY_DESPAWN".equals(projection.checkpointStage())) {
+            return new Target(TargetKind.MOVE, SupplyRuntimeCheckpointResolver.resolve(
+                    projection.journey(), projection.checkpointStage(), projection.checkpointIndex()));
+        }
         SupplyRuntimeCheckpoint next = SupplyRuntimeNextCheckpointResolver.resolve(
                 projection.journey(), projection.checkpointStage(), projection.checkpointIndex())
                 .orElseThrow(() -> new IllegalStateException("terminal checkpoint has no movement target"));
@@ -22,7 +26,8 @@ public final class SupplyRuntimeMovementTargetResolver {
 
     public enum TargetKind {
         SPAWN,
-        MOVE
+        MOVE,
+        FINALIZE
     }
 
     public record Target(TargetKind kind, SupplySetupPosition position) {

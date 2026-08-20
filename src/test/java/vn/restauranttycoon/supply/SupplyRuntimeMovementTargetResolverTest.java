@@ -22,6 +22,19 @@ class SupplyRuntimeMovementTargetResolverTest {
                 SupplyRuntimeMovementTargetResolver.resolve(projection, true).position());
     }
 
+    @Test
+    void terminalCheckpointResolvesMovementTarget() {
+        SupplyDeliveryJourneySnapshot snapshot = new SupplyDeliveryJourneySnapshot(1, "owner", java.util.List.of(
+                new SupplyDeliveryJourneyStep(SupplyDeliveryJourneyStage.DELIVERY_DESPAWN,
+                        new SupplySetupPosition("world", 10, 64, 0, 0, 0))));
+        SupplyRuntimeProjection projection = new SupplyRuntimeProjection(
+                java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), java.util.UUID.randomUUID(),
+                1, "DELIVERY_DESPAWN", 0, snapshot);
+
+        assertEquals(SupplyRuntimeMovementTargetResolver.TargetKind.MOVE,
+                SupplyRuntimeMovementTargetResolver.resolve(projection, true).kind());
+    }
+
     private static SupplyDeliveryJourneySnapshot snapshot() {
         return new SupplyDeliveryJourneySnapshot(1, "owner", java.util.List.of(
                 new SupplyDeliveryJourneyStep(SupplyDeliveryJourneyStage.DELIVERY_ENTRY,
