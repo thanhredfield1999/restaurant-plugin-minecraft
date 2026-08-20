@@ -16,6 +16,12 @@ world-operations:
   poll-ticks: 10
   lease-seconds: 30
   blocks-per-tick: 500
+supply-runtime:
+  enabled: false
+  max-sessions: 4
+  arrival-radius: 1.5
+  max-speed: 0.25
+  lease-renew-ticks: 20
 # Chỉ những cần gạt có tọa độ khai báo tại đây mới là quầy nước.
 # Gạt xuống để bắt đầu rót; chờ đủ thời gian rồi gạt lên để lấy vào tay chính trống.
 # Thay đổi phần này chỉ có hiệu lực sau khi khởi động lại plugin/server an toàn.

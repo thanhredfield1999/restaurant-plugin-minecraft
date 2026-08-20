@@ -12,6 +12,7 @@ public record PluginSettings(
         int maxActivePlots,
         int maxPhysicalCustomersPerPlot,
         WorldOperationSettings worldOperations,
+        SupplyRuntimeSettings supplyRuntime,
         List<PlotSettings> plots,
         DrinkDispenserSettings drinkDispensers
 ) {
@@ -41,6 +42,7 @@ public record PluginSettings(
                 config.getInt("world-operations.poll-ticks"),
                 config.getInt("world-operations.lease-seconds"),
                 config.getInt("world-operations.blocks-per-tick"));
+        SupplyRuntimeSettings supplyRuntime = SupplyRuntimeSettings.from(config);
         ConfigurationSection plotSection = config.getConfigurationSection("plots");
         if (plotSection == null || plotSection.getKeys(false).isEmpty()) {
             throw new IllegalArgumentException("plots must define at least one authored plot");
@@ -73,6 +75,7 @@ public record PluginSettings(
                 maxActivePlots,
                 maxCustomers,
                 worldOperations,
+                supplyRuntime,
                 plots,
                 drinkDispensers);
     }

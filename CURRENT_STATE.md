@@ -5,14 +5,15 @@ Last reviewed: 2026-08-15
 ## Baseline
 
 - Source version: `0.1.0-SNAPSHOT`.
-- Target: Paper `1.20.4`; isolated smoke harness pins build `499`.
-- Java source and bytecode target: `17`.
+- Target: Paper `1.21.11`; isolated smoke harness pins build `132`.
+- Java source and bytecode target: `21`.
 - PostgreSQL is required for integration and production behavior; H2 is test-only.
-- Flyway migrations currently cover schema versions V1 through V12.
-- Database startup now requires schema V12, matching the latest bundled migration.
+- Flyway migrations currently cover schema versions V1 through V17.
+- Database startup now requires schema V17, matching the latest bundled migration. V14 adds durable market cycles, per-SKU prices, idempotent demand events, and order-line price snapshots; V15 adds market invariants and composite price references; V16 adds runtime checkpoint indexes; V17 adds entity cleanup state.
+- `MarketRepository` now provides local PostgreSQL market foundation: open-cycle creation/lookup, SKU price lookup, row-locked purchase demand event recording, atomic aggregate update, and operation-payload conflict detection. `SupplyOrderRepository.captureMarket` now snapshots DB market prices with demand, payment, order lines, and shipment in one transaction. Supplier Villager runtime listener đã có: chỉ Villager có PDC byte `supplier_villager=1` mới mở market; entity interaction bị cancel. Admin dev command `/restaurant dev mark-supplier <entityUuid>` đánh dấu loaded Villager. Listener async resolve plot duy nhất đang sở hữu từ `plot_assignments`; không có plot thì fail closed, rồi mở market với plot scope. Player vẫn có thể dùng command chọn plot rõ ràng. `/restaurant market` mở inventory market; `/restaurant market <plotId>` thêm confirmation flow. Player chọn quantity bằng click phải/trái hoặc Shift ±10, xem subtotal/total, quay lại hoặc xác nhận. Xác nhận gọi `captureMarketAuthorized`, kiểm tra plot ownership/setup rồi atomic snapshot giá + demand + payment + order + shipment; chưa có GUI runtime proof. Cycle rollover now closes expired cycles; H2 concurrency regression and PostgreSQL integration tests cover multi-worker convergence, claim recovery/fencing, Flyway rerun, and idempotent purchase retry. PostgreSQL integration passed using local test database credentials from the attached positional file; secret values are not stored here.
 - V11 adds free onboarding world operations; V12 adds supply shipment claim fields and handoff recipient audit fields.
 - Onboarding listener now allocates a configured plot, guides player by compass, and requests initial stage when player enters configured trigger. Paper runtime remains unverified.
-- Supply runtime still lacks durable claim implementation in coordinator, Citizens delivery handler, player package interaction, and warehouse interaction flow.
+- Supply runtime claim/renew/handoff/stock persistence exists. Added `handoffAuthorized` and `handoffPackageAuthorized` ownership gates. `PackageInteractionListener` handles only entities with PDC `supply_package_id`; it cancels interaction, performs async DB handoff, then gives player a CHEST package token with item PDC `supply_package_id` and removes entity on main thread. Admin dev command `/restaurant dev mark-package <entityUuid> <packageUuid>` marks loaded package entity. `WarehouseInteractionListener` handles only tile blocks with PDC `supply_warehouse=1` and item package PDC, then calls idempotent `stock`. Admin dev command `/restaurant dev mark-warehouse <world> <x> <y> <z>` marks a loaded tile block. Citizens delivery handler remains disabled; Paper runtime proof pending.
 - V7/V8 own durable supply setup points and restaurant-scoped route waypoints.
 - V9 owns durable supply orders, order lines, payments, shipments, packages, and
   warehouse stock tables; V10 owns package line snapshots.
@@ -20,7 +21,25 @@ Last reviewed: 2026-08-15
   `(setup_scope, owner_id, sequence_no)` primary key. Replacing a route deletes
   and reinserts one restaurant's ordered waypoint set in a single transaction.
 
+## Current runtime roadmap status
+
+- R0/R1/R2 projection gates: verified.
+- R3 checkpoint CAS vertical slice: verified; Paper end-to-end unknown.
+- R4 config foundation: verified; `supply-runtime.enabled=false` by default with bounded session/radius/speed/lease settings. Runtime tick/movement remains unverified.
+- R5 receiving persistence: verified; Paper interaction unknown.
+- R6 full journey and R7 release: not ready.
+- Production untouched; Citizens/movement disabled.
+
 ## Verification
+
+Latest controlled Paper smoke on 2026-08-20:
+
+- `scripts/paper-smoke.ps1 -RuntimeFixture -UseExistingConfig -Port 25569 -TimeoutSeconds 180` passed on Paper `1.21.11-132`, Java 21, PostgreSQL 18.6, schema V17. Evidence reached fixture seed, durable claim/dispatch, exact-shipment projection callback, fixture cleanup, and clean shutdown. Movement/Citizens remained disabled. Smoke port `25569` was released after shutdown.
+- GitHub Actions CI run `32285177007` on default branch `main` passed Java build/tests, PostgreSQL 17 integration tests, Windows smoke-guard regression, and plugin artifact upload.
+- DecentHolograms was absent; plugin logged `DecentHolograms unavailable; station holograms disabled` and gameplay/plugin startup continued. This verifies fail-soft behavior only, not hologram rendering.
+- `paperSmokeGuardTest` passed all 11 assertions. Local Paper instance on port `23556` was not mistaken for smoke process on port `25569`.
+- Supply setup GUI now has scope dashboard: configured/required progress, ready/incomplete status, validate button, close button, and explicit point action submenu (set/reset, teleport, remove, cancel/back). Remove requires confirmation; drag and ambiguous Shift+right-click flow are blocked. New shaded JAR and messages copied to local Paper; controlled restart completed; local Paper port `23556` is listening. GUI click journey still needs manual player interaction verification.
+- Menu layout central points use slots `10` and `16`; restaurant point slots remain separate by scope. Point presenter now shows status, location, and action-menu hint.
 
 Latest local verification on 2026-08-15:
 
@@ -75,6 +94,28 @@ Latest local verification on 2026-08-15:
   re-review found no remaining blocker in this boundary. This does not verify Paper inventory
   behavior, provide a user-visible retry workflow, or prove setup readiness remains unchanged
   between preflight and the capture transaction.
+- `/restaurant` with no arguments now opens the player dashboard GUI. It shows the async-loaded
+  restaurant balance, configured restaurant cards, and a guide; clicking a restaurant delegates
+  to the existing ownership/setup-gated order GUI. The pure layout test fixes stable plot ordering,
+  dashboard capacity, and non-functional white-glass slots. Isolated Paper 1.21.11 startup loaded
+  the new JAR successfully; player click-through remains controlled-Paper manual verification.
+- Dashboard and onboarding now use the bounded `RestaurantLore` copy: Hiệp hội Phố Bếp, plot,
+  stage, Chợ đầu mối, manual receiving, and warehouse are described without claiming that Citizens
+  delivery runtime is enabled. `RestaurantLoreTest` covers the required and prohibited claims.
+- D22 locks visible operational characters to Villager-only. Steve/player-skin NPCs are not a
+  Restaurant Tycoon gameplay standard. This is an art/runtime contract only; it does not authorize
+  Villager spawning or enable the blocked Citizens delivery runtime.
+- DecentHolograms `2.9.9` is an optional station-progress renderer. Drink stations create
+  non-persistent API holograms, refresh at most once per second, and remove only holograms created
+  by this plugin on disable. Missing DecentHolograms fails soft; it does not affect dispenser state.
+- Vault API is a compile-only, soft dependency. RestaurantTycoon does not debit or credit Vault yet;
+  internal PostgreSQL ledger remains authoritative until an audited bridge exists.
+- Station hologram projection uses optional DecentHolograms `2.9.9` via `DHAPI`; `plugin.yml`
+  soft-depends on it. The first slice projects configured drink stations once per second with
+  server-authoritative fill progress bounded to `0..100`, does not persist provider holograms,
+  and removes only RestaurantTycoon-owned holograms during plugin disable. Missing provider logs
+  and leaves gameplay enabled. Full build passed; no DecentHolograms JAR is installed in the local
+  Paper run directory yet, so controlled-Paper provider verification remains pending.
 - Supply order repository tests verify that economy debit, submitted order/line snapshots,
   captured payment, shipment, package, and package-line snapshots commit atomically and
   retry idempotently. A forced payment-table failure verifies rollback of both the debit
@@ -207,16 +248,30 @@ window where a player could be charged without durable fulfillment work. The Buk
 ordering GUI and ownership/setup authorization are implemented and unit-verified but
 not yet runtime-verified on Paper.
 Supply runtime recovery wiring is now connected after `DatabaseState.READY`: a
-single-flight coordinator polls bounded durable shipment/package work on the database
-executor and logs pending work without mutating state or spawning entities. Paper/Citizens
-convoy execution and smoke testing remain unverified and require explicit approval, a
+single-flight claim worker polls durable shipment work on the database executor, claims
+with lease/fence, transitions only `CREATED` to `IN_TRANSIT`, releases claims for states
+not yet handled by runtime, and closes before database shutdown. Paper/Citizens convoy
+execution and smoke testing remain unverified and require explicit approval, a
 non-production test server, and real configured plot IDs/worlds. Do not claim runtime
 verification from unit tests or the local build alone.
-Plugin disable closes the supply runtime coordinator before the database is closed. The
-coordinator rejects later polls and checks its closed state before querying or dispatching
-each subsequent batch item; it intentionally does not interrupt a handler or JDBC operation
-that already started. Durable claim/lease/fence ownership remains required before enabling
-a mutating Citizens runtime.
+Plugin disable closes the supply runtime claim worker before the database is closed. The
+worker rejects later runs; it intentionally does not interrupt a JDBC operation that already
+started. Durable claim/lease/fence ownership now exists in `SupplyFulfillmentRepository`
+and is unit-verified for takeover, stale-worker rejection, and the claim-worker transition.
+No Citizens runtime is enabled. Runtime policy decisions D15, D16,
+D17, D21 and V13 are recorded in `docs/SUPPLY_RUNTIME_DECISIONS_VI.md`.
+
+V13 now adds `supply_shipment_runtime`: revision, logical checkpoint, immutable snapshot
+payload/version, `UNLOAD_POINT` deadline, recovery outcome, and transition-operation receipt.
+Upgrade rows without an old runtime snapshot fail closed as `PENDING_MANUAL`; new journeys must
+write a valid pinned snapshot before they become recoverable. New fulfillment rows now create
+an explicit `PENDING_MANUAL` runtime row in the same transaction, preventing an ambiguous
+missing-row state. Route pinning is intentionally fail-closed until setup-point/route data is
+loaded transactionally. A deterministic bounded serializer now produces versioned immutable
+journey payloads with escaped world names and six-decimal coordinates. Repository pinning accepts
+only matching restaurant + `CREATED` shipment + `PENDING_MANUAL` runtime row; it increments
+revision and resets recovery state atomically. The claim worker still refuses unpinned rows.
+H2 migration, serializer, pinning, and runtime recovery tests pass. Supply order fulfillment now also creates the explicit `PENDING_MANUAL` runtime row in its atomic payment/order/shipment transaction. Setup loading + journey planning can pin a snapshot atomically for a matching `restaurantId` and setup owner. Supply order capture now persists the runtime row atomically, but does not auto-pin route yet: current authorization equates `restaurantId` with ordering account in some paths while setup uses `plotId`; auto-joining them without a durable mapping would risk cross-restaurant route pinning. PostgreSQL, concurrency, and Paper/Villager runtime verification remain outstanding. Added `SupplyVanillaVillagerAdapter` for server-thread-only supplier Villager projection with PDC role/shipment markers. Added bounded V1 journey snapshot decoder for persisted checkpoint/step payloads; decoder is pure Java and still not wired to world mutation. Added bounded `SupplyRuntimeProjection` DB read model: shipment/package/restaurant IDs, runtime revision, checkpoint, and decoded snapshot; invalid version/recovery/payload returns empty. Added pure recovery decision: one matching PDC candidate reuses, none requests spawn, duplicate candidates fail-closed; no world-wide entity scan. Added pure checkpoint resolver from persisted stage to snapshot position and adapter method `spawnSupplierAtCheckpoint(...)`; it validates loaded world and server thread. Added pure checkpoint transition state machine. It allows normal progression and repeated `ROUTE_WAYPOINT` steps, rejects skips/backward moves and all implicit `PENDING_MANUAL` transitions. Added V16 `checkpoint_index` durable column and bounded index. Non-waypoint rows require zero; waypoint rows use zero-based repeated-waypoint index. Projection and adapter now carry index; resolver selects exact waypoint. V16 migration test passes. Added atomic `transitionCheckpoint(...)` with claim instance/token/lease validation, revision + stage + index compare-and-set, operation receipt, and idempotent replay payload validation. It rejects invalid waypoint index progression. Added `finalizeDelivery(...)`: locks runtime/shipment/package, requires `HANDED_OFF + STOCKED + DELIVERY_DESPAWN`, applies revision/operation receipt atomically, and supports validated replay. Claim is not reused after handoff because claim lifecycle ends at shipment `HANDED_OFF`. Added V17 durable entity cleanup state (`NONE`/`REQUIRED`/`CONFIRMED`) and cleanup operation receipt. `finalizeDelivery(...)` marks cleanup `REQUIRED`; main-thread adapter removes matching PDC entity; repository can confirm cleanup idempotently. DB/entity actions remain two-phase by design. Added bounded in-memory `SupplyVillagerRegistry` keyed by shipment ID, capped at four entity candidates; duplicate/overflow remains fail-closed. Added `SupplyVillagerRegistryListener` and registered it in `RestaurantTycoonPlugin`: supplier Villagers are indexed on creature spawn/entity load and removed on entity unload/death/remove. Listener only reads PDC and never queries DB. Registry remains bounded at four candidates and overflow fail-closed. Added pure bounded `SupplyVillagerMovementDecision` with arrival radius and max-speed vector cap; adapter `moveToward(...)` applies velocity only on main thread and rejects cross-world target. This is vector projection, not Paper pathfinding or obstacle navigation. Added pure `SupplyVillagerStuckWatchdog`: bounded no-progress ticks, meaningful-distance threshold, invalid-distance rejection, and reset. Added explicit `SupplyVillagerMovementOutcome` (`MOVING`, `ARRIVED`, `STUCK`) and adapter overload combining bounded velocity movement with stuck watchdog. It does not mutate DB; caller must transition checkpoint or mark `PENDING_MANUAL`. Added pure `SupplyRuntimeMovementActionResolver`: `MOVING` continues, `ARRIVED` transitions or finalizes at `DELIVERY_DESPAWN`, `STUCK` marks manual recovery. Resolver has no side effects. Added `SupplyRuntimeMainThreadBridge`: DB coordinator can enqueue immutable runtime work onto server-thread executor; bridge performs no DB/entity mutation itself. Added `SupplyRuntimeProjectionLoader`: reloads projection by shipment + restaurant scope, then verifies package identity from queued work before main-thread entity access. Missing/mismatched projection fails closed. Full runtime orchestration remains incomplete. Paper API research review ghi rõ generic `Executor` chưa chứng minh main-thread Bukkit execution. Added `SupplyBukkitMainThreadExecutor`, wrapping `Server#getScheduler().runTask(...)`; bridge vẫn chưa được wire vào runtime handler thật. Adapter now rejects stale/dead Villagers before movement/removal and rejects unloaded spawn chunks; no chunk force-load. Review found and fixed two bugs: finalize retry could overwrite an existing cleanup receipt with a different operation; new supplier PDC was written after `CreatureSpawnEvent`, so spawn-time registry missed it. Review also tightened checkpoint transition: `ROUTE_WAYPOINT` can enter `DELIVERY_STOP` only at final immutable waypoint; transition now decodes and validates snapshot under row lock.
 
 The domain currently supports the setup points required to begin the GUI slice:
 central order desk and supplier spawn, plus restaurant delivery entry/stop,
@@ -226,8 +281,14 @@ unit-verified. The pure delivery-journey planner, immutable convoy state machine
 and package/handoff authorization are also unit-verified. Convoy/package matching is
 now fail-closed by both restaurant and shipment identity, and public convoy snapshots
 reject invalid progress/state combinations. Shipment and package identity are now durable database records created atomically with
-captured supplier orders. Citizens navigation, runtime convoy execution, Bukkit ordering
-and handoff interaction, and live ingredient-stock gameplay are still not implemented.
+Citizens navigation, runtime convoy execution, Bukkit ordering
+  and handoff interaction, and live ingredient-stock gameplay are still not implemented.
+
+A trust-boundary correction now separates `restaurantId` from `receivingActorId` in authorized package handoff. Player package interaction resolves restaurant ownership from `supply_orders.player_id` before calling the explicit-scope API; worker callers can use the same API with a worker actor without pretending worker UUID is restaurant scope. Focused H2 handoff tests pass. This is domain/unit evidence only; membership permission adapter, durable receiving-worker jobs, player operations GUI, Citizens spawn/navigation, and Paper runtime verification remain pending.
+
+`SupplyPlayerDeliveryStatus` and pure mapper now expose player-facing lifecycle states including preparing, in transit, arrival/waiting, manual or worker receipt, stocking, completed, retry, manual recovery, and safe failure. `DELIVERY_STOP` no longer overrides `ARRIVED`; an arrived package remains `WAITING_FOR_RECEIVING` until durable handoff. `OperationsDashboardEntry` adds immutable player-facing entry data, stable shipment ordering, localized status labels, and next-action text. Focused tests pass. These are pure/read-model contracts only; the inventory GUI still needs bounded DB projection wiring, checkpoint/worker progress read model, and Paper verification. It does not claim runtime state until those sources are connected.
+
+Independent review found handoff/token ordering, split authorization transactions, duplicate interaction risk, and idempotency payload mismatch. Current mitigation pre-checks/adds token before async handoff, uses deterministic operation ID plus in-flight debounce and duplicate-token check, removes token on failed DB mutation, removes entity after successful handoff even if player disconnects, makes player owner authorization plus handoff one DB transaction with row locks, and accepts idempotent replay only when operation ID and receiving actor both match. Unknown checkpoint values now map fail-safe to `FAILED_SAFE`; `DELIVERY_STOP` does not override durable `ARRIVED`. This is not atomic with a real server crash or client inventory manipulation: a crash can leave durable HANDED_OFF state, entity, and/or token requiring recovery. Warehouse stock success now removes one matching package token on the main thread, preventing token reuse after durable stock commit. Stock locks package before checking the existing operation and rejects mismatched replay payloads; repeated matching operation IDs remain idempotent. Player stock authorization now resolves restaurant scope and stock mutation under one transaction/row lock. `STOCKED` is distinct from `COMPLETED` until delivery despawn checkpoint. Durable receipt/token recovery, location binding, and Paper verification remain required.
 
 Connect durable dish entitlements to a vanilla PDC item projection and implement
 bounded inventory reconciliation. The database remains authoritative: reconnect,
