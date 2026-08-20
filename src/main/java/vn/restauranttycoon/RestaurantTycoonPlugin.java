@@ -119,6 +119,7 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
     private SupplyFulfillmentRepository supplyFulfillmentRepository;
     private final Map<UUID, SupplyVillagerStuckWatchdog> supplyRuntimeWatchdogs = new java.util.HashMap<>();
     private final java.util.Set<UUID> supplyRuntimeFinalizing = new java.util.HashSet<>();
+    private final java.util.Set<UUID> supplyRuntimeTransitioning = new java.util.HashSet<>();
     private long supplyRuntimeTick;
     private BukkitTask drinkStationHologramTask;
     private BukkitTask worldOperationPollTask;
@@ -269,6 +270,7 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
         supplyRuntimeSessionRegistry = null;
         supplyRuntimeWatchdogs.clear();
         supplyRuntimeFinalizing.clear();
+        supplyRuntimeTransitioning.clear();
         supplyFulfillmentRepository = null;
         if (supplyRuntimeClaimWorker != null) {
             supplyRuntimeClaimWorker.close();
@@ -505,6 +507,8 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                 continue;
             }
             try {
+                if (supplyRuntimeTransitioning.contains(session.claim().shipmentId())
+                        || supplyRuntimeFinalizing.contains(session.claim().shipmentId())) continue;
                 SupplyRuntimeMovementTargetResolver.Target target = SupplyRuntimeMovementTargetResolver.resolve(
                         session.projection(), true);
                 SupplySetupPosition position = target.position();
@@ -532,15 +536,41 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                             + session.projection().revision() + ":"
                             + session.projection().checkpointStage() + ":"
                             + session.projection().checkpointIndex()).getBytes(StandardCharsets.UTF_8));
+                    supplyRuntimeTransitioning.add(session.claim().shipmentId());
                     supplyRuntimeTransitionCoordinator.transition(
                             session.claim(), session.projection(), operationId)
-                            .whenComplete((result, error) -> runSync(() -> {
-                                if (error == null) getLogger().info("SUPPLY_RUNTIME_CHECKPOINT_CAS shipment="
-                                        + session.claim().shipmentId() + " result=" + result);
-                                supplyRuntimeSessionRegistry.remove(session.claim().shipmentId());
-                                supplyRuntimeWatchdogs.remove(session.claim().shipmentId());
-                                if (error != null) getLogger().warning("Supply runtime transition failed: " + rootMessage(error));
-                            }));
+                            .whenComplete((result, error) -> {
+                                if (error != null) {
+                                    runSync(() -> {
+                                        supplyRuntimeTransitioning.remove(session.claim().shipmentId());
+                                        getLogger().warning("Supply runtime transition failed: " + rootMessage(error));
+                                        markRuntimePendingManual(session.claim());
+                                    });
+                                    return;
+                                }
+                                CompletableFuture.supplyAsync(() -> {
+                                    try {
+                                        return new SupplyRuntimeProjectionLoader(supplyFulfillmentRepository)
+                                                .load(new SupplyRuntimeWork(
+                                                        session.claim().shipmentId(), session.claim().packageId(),
+                                                        session.claim().restaurantId(), session.claim().shipmentState(),
+                                                        session.claim().packageState())).orElseThrow();
+                                    } catch (SQLException exception) {
+                                        throw new CompletionException(exception);
+                                    }
+                                }, database.executor()).whenComplete((nextProjection, reloadError) -> runSync(() -> {
+                                    supplyRuntimeTransitioning.remove(session.claim().shipmentId());
+                                    if (reloadError != null) {
+                                        getLogger().warning("Supply runtime projection reload failed: " + rootMessage(reloadError));
+                                        markRuntimePendingManual(session.claim());
+                                    } else {
+                                        supplyRuntimeSessionRegistry.replaceProjection(session.claim().shipmentId(), nextProjection);
+                                        supplyRuntimeWatchdogs.remove(session.claim().shipmentId());
+                                        getLogger().info("SUPPLY_RUNTIME_CHECKPOINT_CAS shipment="
+                                                + session.claim().shipmentId() + " result=" + result);
+                                    }
+                                }));
+                            });
                 } else if (outcome == SupplyVillagerMovementOutcome.STUCK) {
                     getLogger().warning("Supply runtime supplier stuck; session moved to manual recovery");
                     supplyRuntimeSessionRegistry.remove(session.claim().shipmentId());

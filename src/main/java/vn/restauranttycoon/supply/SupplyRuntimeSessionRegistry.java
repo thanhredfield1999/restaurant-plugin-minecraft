@@ -32,6 +32,16 @@ public final class SupplyRuntimeSessionRegistry {
         return true;
     }
 
+    public boolean replaceProjection(UUID shipmentId, SupplyRuntimeProjection projection) {
+        SupplyRuntimeSession existing = sessions.get(Objects.requireNonNull(shipmentId, "shipmentId"));
+        if (existing == null) return false;
+        if (!existing.claim().shipmentId().equals(projection.shipmentId())) {
+            throw new IllegalArgumentException("projection shipment identity mismatch");
+        }
+        sessions.put(shipmentId, new SupplyRuntimeSession(existing.claim(), projection, existing.entityId()));
+        return true;
+    }
+
     public Optional<SupplyRuntimeSession> get(UUID shipmentId) {
         return Optional.ofNullable(sessions.get(Objects.requireNonNull(shipmentId, "shipmentId")));
     }

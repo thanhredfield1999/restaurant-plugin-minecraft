@@ -272,7 +272,8 @@ try {
                     [string]$log,
                     "SUPPLY_RUNTIME_PROJECTION_DISPATCHED shipment=$seededShipmentId stage=DELIVERY_ENTRY index=0 .*movement=$movementState")
                 $movementObserved = !$Movement -or ([string]$log -like "*SUPPLY_RUNTIME_MOVING shipment=$seededShipmentId*")
-                if ($seeded -and $dispatched -and $movementObserved) { break }
+                $movementComplete = !$Movement -or ([string]$log -like "*SUPPLY_RUNTIME_ENTITY_CLEANED shipment=$seededShipmentId*")
+                if ($seeded -and $dispatched -and $movementObserved -and $movementComplete) { break }
                 if ([string]$log -like "*SUPPLY_RUNTIME_FIXTURE_SEED_FAILED fixture=$fixtureId*") {
                     throw "Runtime fixture seed failed."
                 }
