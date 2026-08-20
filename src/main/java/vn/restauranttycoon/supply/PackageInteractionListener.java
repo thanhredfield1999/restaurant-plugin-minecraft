@@ -81,7 +81,6 @@ public final class PackageInteractionListener implements Listener {
                 });
             } catch (SQLException | RuntimeException exception) {
                 Bukkit.getScheduler().runTask(plugin, () -> {
-                    player.getInventory().removeItem(token);
                     if (player.isOnline()) {
                         player.sendMessage(ChatColor.RED + "Không thể nhận package: " + rootMessage(exception));
                     }

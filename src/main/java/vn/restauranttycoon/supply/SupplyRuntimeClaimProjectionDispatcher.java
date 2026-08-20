@@ -22,6 +22,6 @@ public final class SupplyRuntimeClaimProjectionDispatcher {
         Objects.requireNonNull(claim, "claim");
         Optional<SupplyRuntimeProjection> projection = source.load(claim);
         if (projection.isEmpty()) return;
-        mainThreadExecutor.execute(() -> handler.handle(projection.get()));
+        mainThreadExecutor.execute(() -> handler.handle(claim, projection.get()));
     }
 }

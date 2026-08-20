@@ -47,6 +47,8 @@ import vn.restauranttycoon.supply.SupplyRuntimeClaimWorker;
 import vn.restauranttycoon.supply.SupplyRuntimeClaimProjectionDispatcher;
 import vn.restauranttycoon.supply.SupplyRuntimeProjectionLoader;
 import vn.restauranttycoon.supply.SupplyRuntimeFixtureRepository;
+import vn.restauranttycoon.supply.SupplyRuntimeEntityProjectionPlan;
+import vn.restauranttycoon.supply.SupplyRuntimeEntityProjectionPlanner;
 import vn.restauranttycoon.supply.SupplyRuntimeCoordinator;
 import vn.restauranttycoon.supply.SupplyRuntimeWork;
 import vn.restauranttycoon.supply.BukkitIngredientCatalogLoader;
@@ -363,9 +365,18 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                         claim.shipmentId(), claim.packageId(), claim.restaurantId(),
                         claim.shipmentState(), claim.packageState())),
                 task -> getServer().getScheduler().runTask(this, task),
-                projection -> getLogger().info(() -> "SUPPLY_RUNTIME_PROJECTION_DISPATCHED shipment="
-                        + projection.shipmentId() + " stage=" + projection.checkpointStage()
-                        + " index=" + projection.checkpointIndex() + " movement=disabled"));
+                (claim, projection) -> {
+                    SupplyRuntimeEntityProjectionPlan entityPlan = SupplyRuntimeEntityProjectionPlanner.plan(
+                            projection.shipmentId(), supplyVillagerRegistry.candidates(projection.shipmentId()));
+                    getLogger().info(() -> "SUPPLY_RUNTIME_PROJECTION_DISPATCHED shipment="
+                            + projection.shipmentId() + " stage=" + projection.checkpointStage()
+                            + " index=" + projection.checkpointIndex()
+                            + " entityAction=" + entityPlan.action()
+                            + " movement=disabled");
+                    if (entityPlan.action() == SupplyRuntimeEntityProjectionPlan.Action.PENDING_MANUAL) {
+                        getLogger().warning("Supply entity candidates are duplicated; movement remains disabled");
+                    }
+                });
         supplyRuntimeClaimProjectionDispatcher = projectionDispatcher;
         SupplyRuntimeClaimWorker worker = new SupplyRuntimeClaimWorker(
                 repository,

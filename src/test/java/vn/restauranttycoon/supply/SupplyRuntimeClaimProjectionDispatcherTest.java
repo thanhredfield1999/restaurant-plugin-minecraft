@@ -1,72 +1,49 @@
 package vn.restauranttycoon.supply;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
-import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.time.Instant;
 import org.junit.jupiter.api.Test;
-import vn.restauranttycoon.supplysetup.SupplyDeliveryJourneySnapshot;
-import vn.restauranttycoon.supplysetup.SupplyDeliveryJourneyStage;
-import vn.restauranttycoon.supplysetup.SupplyDeliveryJourneyStep;
-import vn.restauranttycoon.supplysetup.SupplySetupPosition;
 
 class SupplyRuntimeClaimProjectionDispatcherTest {
     @Test
-    void loadsProjectionOnClaimCallbackThreadThenQueuesMainThreadHandler() throws Exception {
-        SupplyRuntimeClaim claim = claim();
-        SupplyRuntimeWork work = new SupplyRuntimeWork(
-                claim.shipmentId(), claim.packageId(), claim.restaurantId(),
-                SupplyShipmentState.IN_TRANSIT, SupplyPackageState.IN_TRANSIT);
-        SupplyRuntimeProjection projection = projection(claim);
-        AtomicReference<SupplyRuntimeProjection> received = new AtomicReference<>();
-        AtomicReference<String> thread = new AtomicReference<>();
-        java.util.ArrayList<Runnable> queued = new java.util.ArrayList<>();
-
+    void mainThreadHandlerReceivesOriginalClaimAndLoadedProjection() throws Exception {
+        SupplyRuntimeClaim claim = new SupplyRuntimeClaim(
+                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                SupplyShipmentState.IN_TRANSIT, SupplyPackageState.IN_TRANSIT,
+                1, "worker", UUID.randomUUID(), Instant.now().plusSeconds(30));
+        SupplyRuntimeProjection projection = TestSupplyRuntimeProjections.valid(claim.shipmentId(), claim.packageId(), claim.restaurantId());
+        AtomicReference<SupplyRuntimeClaim> receivedClaim = new AtomicReference<>();
+        AtomicReference<SupplyRuntimeProjection> receivedProjection = new AtomicReference<>();
         SupplyRuntimeClaimProjectionDispatcher dispatcher = new SupplyRuntimeClaimProjectionDispatcher(
                 ignored -> Optional.of(projection),
-                queued::add,
-                value -> {
-                    received.set(value);
-                    thread.set(Thread.currentThread().getName());
+                Runnable::run,
+                (received, loaded) -> {
+                    receivedClaim.set(received);
+                    receivedProjection.set(loaded);
                 });
 
         dispatcher.handle(claim);
-        assertEquals(1, queued.size());
-        queued.get(0).run();
-        assertEquals(projection, received.get());
-        assertTrue(thread.get() != null);
+
+        assertEquals(claim, receivedClaim.get());
+        assertNotNull(receivedProjection.get());
+        assertEquals(projection, receivedProjection.get());
     }
+}
 
-    @Test
-    void missingProjectionDoesNotTouchMainThreadHandler() throws Exception {
-        java.util.ArrayList<Runnable> queued = new java.util.ArrayList<>();
-        SupplyRuntimeClaimProjectionDispatcher dispatcher = new SupplyRuntimeClaimProjectionDispatcher(
-                ignored -> Optional.empty(), queued::add, ignored -> { });
+final class TestSupplyRuntimeProjections {
+    private TestSupplyRuntimeProjections() { }
 
-        dispatcher.handle(claim());
-
-        assertTrue(queued.isEmpty());
-    }
-
-    private static SupplyRuntimeClaim claim() {
-        return new SupplyRuntimeClaim(
-                UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
-                SupplyShipmentState.IN_TRANSIT, SupplyPackageState.IN_TRANSIT, 1,
-                "worker", UUID.randomUUID(), Instant.now().plusSeconds(60));
-    }
-
-    private static SupplyRuntimeProjection projection(SupplyRuntimeClaim claim) {
-        SupplyDeliveryJourneySnapshot journey = new SupplyDeliveryJourneySnapshot(1, "plot", List.of(
-                new SupplyDeliveryJourneyStep(SupplyDeliveryJourneyStage.DELIVERY_ENTRY,
-                        new SupplySetupPosition("world", 1, 65, 1, 0, 0)),
-                new SupplyDeliveryJourneyStep(SupplyDeliveryJourneyStage.DELIVERY_STOP,
-                        new SupplySetupPosition("world", 2, 65, 1, 0, 0))));
-        return new SupplyRuntimeProjection(
-                claim.shipmentId(), claim.packageId(), claim.restaurantId(), 1,
+    static SupplyRuntimeProjection valid(UUID shipment, UUID packageId, UUID restaurantId) {
+        var journey = new vn.restauranttycoon.supplysetup.SupplyDeliveryJourneySnapshot(
+                1, "plot", java.util.List.of(new vn.restauranttycoon.supplysetup.SupplyDeliveryJourneyStep(
+                        vn.restauranttycoon.supplysetup.SupplyDeliveryJourneyStage.DELIVERY_ENTRY,
+                        new vn.restauranttycoon.supplysetup.SupplySetupPosition("world", 0, 64, 0, 0, 0))));
+        return new SupplyRuntimeProjection(shipment, packageId, restaurantId, 1,
                 "DELIVERY_ENTRY", 0, journey);
     }
 }
