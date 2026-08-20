@@ -30,6 +30,7 @@ class SupplyRuntimeSessionRegistryTest {
         assertTrue(registry.open(first, projection(first), UUID.randomUUID()));
         assertFalse(registry.open(second, projection(second), UUID.randomUUID()));
         assertEquals(1, registry.size());
+        assertEquals(1, registry.snapshot().size());
     }
 
     private static SupplyRuntimeClaim claim() {

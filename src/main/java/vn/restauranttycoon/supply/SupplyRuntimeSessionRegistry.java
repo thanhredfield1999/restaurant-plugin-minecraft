@@ -29,6 +29,10 @@ public final class SupplyRuntimeSessionRegistry {
         return Optional.ofNullable(sessions.get(Objects.requireNonNull(shipmentId, "shipmentId")));
     }
 
+    public java.util.List<SupplyRuntimeSession> snapshot() {
+        return java.util.List.copyOf(sessions.values());
+    }
+
     public void remove(UUID shipmentId) {
         sessions.remove(Objects.requireNonNull(shipmentId, "shipmentId"));
     }
