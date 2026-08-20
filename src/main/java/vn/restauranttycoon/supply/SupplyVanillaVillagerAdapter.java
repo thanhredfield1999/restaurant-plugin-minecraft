@@ -9,6 +9,7 @@ import org.bukkit.NamespacedKey;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Villager;
 import org.bukkit.util.Vector;
+import com.destroystokyo.paper.entity.Pathfinder;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -92,7 +93,13 @@ public final class SupplyVanillaVillagerAdapter {
         SupplyVillagerMovementDecision decision = SupplyVillagerMovementDecision.toward(
                 villager.getX(), villager.getY(), villager.getZ(),
                 target.getX(), target.getY(), target.getZ(), arrivalRadius, maxSpeed);
-        villager.setVelocity(new Vector(decision.velocityX(), decision.velocityY(), decision.velocityZ()));
+        Pathfinder pathfinder = villager.getPathfinder();
+        pathfinder.setCanFloat(true);
+        pathfinder.setCanOpenDoors(false);
+        pathfinder.setCanPassDoors(false);
+        if (!pathfinder.moveTo(target, maxSpeed)) {
+            villager.setVelocity(new Vector(decision.velocityX(), decision.velocityY(), decision.velocityZ()));
+        }
         return decision;
     }
 

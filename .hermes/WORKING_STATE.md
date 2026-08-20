@@ -24,6 +24,7 @@ Tiếp tục R4–R7 theo roadmap. R4 controlled Paper smoke là blocker trướ
 - R4: code-wired; controlled Paper movement chưa verified.
 - R5 Paper receiving, R6 full journey, R7 release: chưa sẵn sàng.
 - Smoke gần nhất boot/fixture/claim/spawn được, nhưng stale fixture gây session capacity conflict và Villager `setAI(false)+setVelocity` bị `STUCK`; Paper shutdown sạch. Đã thêm `cleanupAllFixtures` + regression test và smoke hiện đợi marker cleanup-all trước seed; lần smoke mới chưa chạy.
+- Villager `STUCK` đã được reproduce trên Paper khi chỉ dùng `setVelocity`; adapter hiện dùng Paper `Pathfinder.moveTo` với fallback velocity. Cần controlled smoke mới để xác nhận movement thật; không fake PASS.
 - Full local build gần nhất: `./gradlew.bat clean test build --no-daemon --console=plain` — PASS.
 
 ## Latest code
