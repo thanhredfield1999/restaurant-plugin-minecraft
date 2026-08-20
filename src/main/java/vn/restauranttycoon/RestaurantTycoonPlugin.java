@@ -116,6 +116,7 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
     private BukkitTask supplyRuntimeTickTask;
     private SupplyRuntimeSessionRegistry supplyRuntimeSessionRegistry;
     private SupplyRuntimeTransitionCoordinator supplyRuntimeTransitionCoordinator;
+    private SupplyFulfillmentRepository supplyFulfillmentRepository;
     private final Map<UUID, SupplyVillagerStuckWatchdog> supplyRuntimeWatchdogs = new java.util.HashMap<>();
     private long supplyRuntimeTick;
     private BukkitTask drinkStationHologramTask;
@@ -266,6 +267,7 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
         }
         supplyRuntimeSessionRegistry = null;
         supplyRuntimeWatchdogs.clear();
+        supplyFulfillmentRepository = null;
         if (supplyRuntimeClaimWorker != null) {
             supplyRuntimeClaimWorker.close();
             supplyRuntimeClaimWorker = null;
@@ -389,6 +391,7 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
 
     private void startSupplyRuntimeCoordinator() {
         SupplyFulfillmentRepository repository = new SupplyFulfillmentRepository(database.requireDataSource());
+        supplyFulfillmentRepository = repository;
         supplyRuntimeFixtureRepository = new SupplyRuntimeFixtureRepository(database.requireDataSource());
         if (settings.supplyRuntime().enabled()) {
             supplyRuntimeSessionRegistry = new SupplyRuntimeSessionRegistry(
@@ -493,6 +496,8 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
             Entity entity = Bukkit.getEntity(session.entityId());
             if (!(entity instanceof Villager villager) || !villager.isValid()) {
                 supplyRuntimeSessionRegistry.remove(session.claim().shipmentId());
+                supplyRuntimeWatchdogs.remove(session.claim().shipmentId());
+                markRuntimePendingManual(session.claim());
                 continue;
             }
             try {
@@ -525,6 +530,7 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
                     getLogger().warning("Supply runtime supplier stuck; session moved to manual recovery");
                     supplyRuntimeSessionRegistry.remove(session.claim().shipmentId());
                     supplyRuntimeWatchdogs.remove(session.claim().shipmentId());
+                    markRuntimePendingManual(session.claim());
                 } else if (supplyRuntimeTick % settings.supplyRuntime().leaseRenewTicks() == 0) {
                     CompletableFuture.supplyAsync(() -> {
                         try {
@@ -541,8 +547,25 @@ public final class RestaurantTycoonPlugin extends JavaPlugin {
             } catch (RuntimeException exception) {
                 getLogger().warning("Controlled supply runtime tick rejected: " + rootMessage(exception));
                 supplyRuntimeSessionRegistry.remove(session.claim().shipmentId());
+                supplyRuntimeWatchdogs.remove(session.claim().shipmentId());
+                markRuntimePendingManual(session.claim());
             }
         }
+    }
+
+    private void markRuntimePendingManual(SupplyRuntimeClaim claim) {
+        SupplyFulfillmentRepository repository = supplyFulfillmentRepository;
+        if (repository == null) return;
+        CompletableFuture.runAsync(() -> {
+            try {
+                repository.markPendingManual(claim);
+            } catch (SQLException exception) {
+                throw new CompletionException(exception);
+            }
+        }, database.executor()).exceptionally(error -> {
+            getLogger().warning("Supply runtime manual recovery persistence failed: " + rootMessage(error));
+            return null;
+        });
     }
 
     private void startOnboarding() {
